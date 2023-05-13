@@ -17,7 +17,3 @@ class DiscreteGradientPolicy(nn.Module):
         x = torch.relu(self.fc2(x))
         x = torch.softmax(self.fc3(x), dim=-1)
         return x
-
-        
-
-

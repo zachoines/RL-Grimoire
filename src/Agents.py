@@ -37,7 +37,7 @@ class Agent:
     def state_dict(self)-> Dict[str,Dict]:
         raise NotImplementedError
 
-    def get_actions(self, state: np.ndarray, requires_grad=False):
+    def get_actions(self, state: np.ndarray, eval=False)->Tensor:
         raise NotImplementedError
     
     def learn(self, exp_buffer: ExperienceBuffer, hyperparams: Hyperparams, optimizers: Dict[str,Optimizer])->Dict[str, Tensor]:
@@ -71,10 +71,15 @@ class REINFORCE(Agent):
             raise NotImplementedError
     
 
-    def get_actions(self, state: np.ndarray, requires_grad=False)->Tensor:
+    def get_actions(self, state: np.ndarray, eval=False)->Tensor:
         if self.action_type.__class__ == Discrete:
-            state_tensor = torch.tensor(state, device=self.device, dtype=torch.float32, requires_grad=requires_grad)
-            return multinomial_select(self.policy(state_tensor))
+            if eval:
+                state_tensor = torch.tensor(state, device=self.device, dtype=torch.float32, requires_grad=False)
+                action_probs = self.policy(state_tensor)
+                return torch.argmax(action_probs)
+            else:
+                state_tensor = torch.tensor(state, device=self.device, dtype=torch.float32, requires_grad=False)
+                return multinomial_select(self.policy(state_tensor))
         else:
             raise NotImplementedError
         

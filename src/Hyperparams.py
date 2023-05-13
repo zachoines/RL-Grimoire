@@ -1,7 +1,7 @@
 class Hyperparams:
     def __init__(self,
         num_envs: int = 8,
-        num_epochs: int = 4000,
+        num_epochs: int = 600,
         samples_per_epoch: int = 1024, 
         batch_size: int = 1024,  
         policy_learning_rate: float = 3e-4, 
