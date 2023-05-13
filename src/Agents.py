@@ -1,13 +1,17 @@
-import torch
-from Policies import DiscreteGradientPolicy
-from Utilities import multinomial_select
-from Datasets import ExperienceBuffer, Transition
 from gymnasium.spaces import Discrete, Space
 import numpy as np
-from Hyperparams import Hyperparams
-from torch.optim import Optimizer
+
+# Torch imports
+import torch
 from typing import Dict, Iterator
 from torch import Tensor
+from torch.optim import Optimizer
+
+# Local imports
+from Datasets import ExperienceBuffer, Transition
+from Hyperparams import Hyperparams
+from Policies import DiscreteGradientPolicy
+from Utilities import multinomial_select
 
 class Agent:
     def __init__(
@@ -24,19 +28,22 @@ class Agent:
         self.action_type = action_type
         self.device = device
 
-    def save(self, location: str):
-        raise NotImplementedError
+    def save(self, location: str)->None:
+        torch.save(self.state_dict(), location)
 
-    def load(self, location: str):
+    def load(self, location: str)->None:
+        raise NotImplementedError
+    
+    def state_dict(self)-> Dict[str,Dict]:
         raise NotImplementedError
 
     def get_actions(self, state: np.ndarray, requires_grad=False):
         raise NotImplementedError
     
-    def learn(self, exp_buffer: ExperienceBuffer, hyperparams: Hyperparams, optimizers: Dict[str,Optimizer])->dict[str, Tensor]:
+    def learn(self, exp_buffer: ExperienceBuffer, hyperparams: Hyperparams, optimizers: Dict[str,Optimizer])->Dict[str, Tensor]:
         raise NotImplementedError
     
-    def parameter_dict(self)->dict:
+    def parameter_dict(self)->Dict[str, Iterator]:
         raise NotImplementedError
 
 class REINFORCE(Agent):
@@ -64,7 +71,7 @@ class REINFORCE(Agent):
             raise NotImplementedError
     
 
-    def get_actions(self, state: np.ndarray, requires_grad=False):
+    def get_actions(self, state: np.ndarray, requires_grad=False)->Tensor:
         if self.action_type.__class__ == Discrete:
             state_tensor = torch.tensor(state, device=self.device, dtype=torch.float32, requires_grad=requires_grad)
             return multinomial_select(self.policy(state_tensor))
@@ -106,28 +113,38 @@ class REINFORCE(Agent):
         loss = torch.mean(pg_loss - (hyperparams.entropy_coefficient * entropy))
 
         # Optimize the model
+        optimizers['policy'].zero_grad()
         loss.backward()
         # torch.nn.utils.clip_grad.clip_grad_norm_(self.policy.parameters(), 2.0)
         optimizers['policy'].step()
-        optimizers['policy'].zero_grad()
-
+        
         return { 
             "policy_loss": pg_loss.mean(),
             "entropy": entropy.mean(),
             "returns": returns.mean()
         }
         
-    def calc_returns(self, rewards, dones, hyperparams: Hyperparams):
+    def calc_returns(self, rewards, dones, hyperparams: Hyperparams)->np.ndarray:
         # Compute returns by going backwards and iteratively summing discounted rewards
+        discounts = [pow(hyperparams.gamma, i) for i in range(len(rewards))]
         running_returns = np.zeros(hyperparams.num_envs, dtype=np.float32)
         returns = np.zeros_like(rewards)
         for i in range(hyperparams.batch_size - 1, -1, -1):
-            running_returns = rewards[i] + (1 - dones[i]) * hyperparams.gamma * running_returns
+            running_returns = rewards[i] + (1 - dones[i]) * discounts[i] * running_returns
             returns[i] = running_returns
 
         return returns
     
-    def parameter_dict(self) -> dict[str,Iterator]:
+    def parameter_dict(self) -> Dict[str,Iterator]:
         return {
             "policy": self.policy.parameters()
         }
+    
+    def state_dict(self)-> Dict[str,Dict]:
+        return {
+            "policy": self.policy.state_dict()
+        }
+    
+    def load(self, location: str)->None:
+        state_dicts = torch.load(location)
+        self.policy.load_state_dict(state_dicts["policy"])

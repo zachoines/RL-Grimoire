@@ -12,7 +12,8 @@ class Trainer:
         agent: Agent, 
         exp_buffer: ExperienceBuffer,
         env: gym.Env,
-        hyperparams: Hyperparams
+        hyperparams: Hyperparams,
+        save_location: str
     ):
         self.agent = agent
         self.exp_buffer = exp_buffer
@@ -21,31 +22,32 @@ class Trainer:
         self.hyperparams = hyperparams
         self.current_epoch = 0
         self.optimizers = {}
+        self.save_location = save_location
         
         for net, params in agent.parameter_dict().items():
             self.optimizers[net] = AdamW(params, lr=hyperparams.policy_learning_rate)
 
         self.writer = SummaryWriter()
    
-    def set_optimizers(self, optimizers: Dict[str, Optimizer]):
+    def set_optimizers(self, optimizers: Dict[str, Optimizer])->None:
         self.optimizers = optimizers
 
     def model_step(self)->dict[str, Tensor]:
         return self.agent.learn(self.exp_buffer, self.hyperparams, self.optimizers)
 
-    def log_step(self, train_results: dict[str, Tensor]):
+    def log_step(self, train_results: dict[str, Tensor])->None:
         for metric, value in train_results.items():
             self.writer.add_scalar(tag=metric, scalar_value=value, global_step=self.current_epoch)
 
-    def save_progress(self):
-        pass
+    def save_model(self)->None:
+        return self.agent.save(self.save_location)
 
     def __iter__(self):
         return self
 
     def __next__(self):
 
-        # Stop when reach reach max epochs
+        # Stop when reaching max epochs
         self.current_epoch += 1
         if self.current_epoch > self.hyperparams.num_epochs:
             self.writer.close()
@@ -60,6 +62,6 @@ class Trainer:
 
         train_results = self.model_step()
         self.log_step(train_results)
-        self.save_progress()
+        self.save_model()
 
         return self.current_epoch
