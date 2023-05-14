@@ -11,6 +11,7 @@ from torch.optim import Optimizer
 from Datasets import ExperienceBuffer, Transition
 from Hyperparams import Hyperparams
 from Policies import DiscreteGradientPolicy
+from Networks import ValueNetwork
 from Utilities import multinomial_select
 
 class Agent:
@@ -65,8 +66,8 @@ class REINFORCE(Agent):
         )
 
         if self.action_type.__class__ == Discrete:
-            self.policy = DiscreteGradientPolicy(state_size, num_actions, hidden_size, device=device)
-            
+            self.policy = DiscreteGradientPolicy(state_size, num_actions, hidden_size, device)
+            self.value = ValueNetwork(state_size, hidden_size, device)
         else:
             raise NotImplementedError
     
@@ -107,24 +108,33 @@ class REINFORCE(Agent):
         states = torch.tensor(states[indices], device=self.device, dtype=torch.float32)
         actions = torch.tensor(actions[indices], device=self.device, dtype=torch.int64)
         returns = torch.tensor(returns[indices], device=self.device, dtype=torch.float32)
-        
+  
         # Now determine our policy loss
+        advantages = returns - self.value(states)
         probs = self.policy(states)
         log_probs = torch.log(probs + 1e-6)
         action_log_probs = log_probs.gather(1, actions)
         entropy = -torch.sum(probs * log_probs, dim=-1, keepdim=True)
 
-        pg_loss = -action_log_probs * returns
+        # Policy Loss
+        pg_loss = -action_log_probs * advantages
         loss = torch.mean(pg_loss - (hyperparams.entropy_coefficient * entropy))
 
-        # Optimize the model
+        # Value loss
+        value_loss = torch.nn.functional.mse_loss(self.value(states), returns)
+
+        # Optimize the models
         optimizers['policy'].zero_grad()
         loss.backward()
-        # torch.nn.utils.clip_grad.clip_grad_norm_(self.policy.parameters(), 2.0)
         optimizers['policy'].step()
+
+        optimizers['value'].zero_grad()
+        value_loss.backward()
+        optimizers['value'].step()
         
-        return { 
+        return {
             "policy_loss": pg_loss.mean(),
+            "value_loss": value_loss.mean(),
             "entropy": entropy.mean(),
             "returns": returns.mean()
         }
@@ -142,7 +152,8 @@ class REINFORCE(Agent):
     
     def parameter_dict(self) -> Dict[str,Iterator]:
         return {
-            "policy": self.policy.parameters()
+            "policy": self.policy.parameters(),
+            "value": self.value.parameters()
         }
     
     def state_dict(self)-> Dict[str,Dict]:
