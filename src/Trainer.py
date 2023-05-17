@@ -5,15 +5,16 @@ from torch.optim import Optimizer, AdamW
 from Hyperparams import Hyperparams
 from torch.utils.tensorboard.writer import SummaryWriter
 from typing import Dict
+import torch
 from torch import Tensor
 
 class Trainer:
     def __init__(self,
         agent: Agent, 
-        exp_buffer: ExperienceBuffer,
         env: gym.Env,
         hyperparams: Hyperparams,
-        save_location: str
+        save_location: str,
+        exp_buffer: ExperienceBuffer = ExperienceBuffer()
     ):
         self.agent = agent
         self.exp_buffer = exp_buffer
@@ -54,14 +55,18 @@ class Trainer:
             raise StopIteration
         
         # Collect experiances
-        for _ in range(self.hyperparams.samples_per_epoch):
-            action = self.agent.get_actions(self.state)
-            next_state, reward, done, _, _ = self.env.step(action.flatten())
-            self.exp_buffer.append([Transition(self.state, action, next_state, reward, done)])
-            self.state = next_state
+        with torch.no_grad():
+            for _ in range(self.hyperparams.samples_per_epoch):
+                if self.hyperparams.render:
+                    self.env.render()
+                action = self.agent.get_actions(self.state).cpu().numpy().squeeze()
+                next_state, reward, done, _, _ = self.env.step(action)
+                self.exp_buffer.append([Transition(self.state, action, next_state, reward, done)])
+                self.state = next_state
 
-        train_results = self.model_step()
-        self.log_step(train_results)
+        for _ in range(int(self.hyperparams.samples_per_epoch / self.hyperparams.num_epochs) + 1):
+            train_results = self.model_step()
+            self.log_step(train_results)
         self.save_model()
 
         return self.current_epoch
