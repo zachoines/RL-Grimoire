@@ -4,7 +4,7 @@ from collections import namedtuple
 Transition = namedtuple('Transition', ('state', 'action', 'next_state', 'reward', 'done'))
 
 class ExperienceBuffer:
-    def __init__(self, capacity = 10000):
+    def __init__(self, capacity = 1000000):
         self.capacity = capacity
         self.buffer = []
         self.position = 0
