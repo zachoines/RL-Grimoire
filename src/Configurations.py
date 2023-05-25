@@ -1,154 +1,94 @@
 import numpy as np
+from typing import Dict
 
-class Config:
-    def __init__(self):
-        self.agent_params: AgentParams = AgentParams()
-        self.trainer_params: TrainerParams = TrainerParams()
-
-
-class REINFORCECartpoleConfig(Config):
-    def __init__(self):
-        super().__init__()
-
-        # Agent related parameters
-        self.agent_params.gamma = 0.99
-        self.agent_params.policy_learning_rate = 1e-4
-        self.agent_params.value_learning_rate = 1e-3
-        self.agent_params.entropy_coefficient = 0.01
-        self.agent_params.hidden_size = 64
-
-        # Trainer related parameters
-        self.trainer_params.num_envs = 8
-        self.trainer_params.num_epochs = 1000
-        self.trainer_params.steps_per_epoch = 512
-        self.trainer_params.batch_size = 512
-        self.trainer_params.render = False
-        self.trainer_params.env_name = "CartPole-v1"
-        self.trainer_params.save_location = "RL-Grimoire/saved_models/CartPoleREINFORCE"
-
-
-class REINFORCEHalfCheetahConfig(Config):
-    def __init__(self):
-        super().__init__()
-
-        # Agent related parameters
-        self.agent_params.gamma = 0.99
-        self.agent_params.policy_learning_rate = 1e-4
-        self.agent_params.value_learning_rate = 1e-3
-        self.agent_params.entropy_coefficient = 0.01
-        self.agent_params.hidden_size = 64
-
-        # Trainer related parameters
-        self.trainer_params.num_envs = 8
-        self.trainer_params.num_epochs = 1000
-        self.trainer_params.steps_per_epoch = 512
-        self.trainer_params.batch_size = 512
-        self.trainer_params.env_name = "HalfCheetah-v4"
-        self.trainer_params.save_location = "RL-Grimoire/saved_models/HalfCheetahREINFORCE"
-
-
-class A2CInvertedDoublePendulumConfig(Config):
-    def __init__(self):
-        super().__init__()
-
-        # Agent related parameters
-        self.agent_params.tau = 0.005
-        self.agent_params.gamma = 0.999
-        self.agent_params.policy_learning_rate = 1e-5
-        self.agent_params.value_learning_rate = 1e-4
-        self.agent_params.entropy_coefficient = 0.005
-        self.agent_params.hidden_size = 128
-
-        # Trainer related parameters
-        self.trainer_params.num_envs = 128       
-        self.trainer_params.num_epochs = 1300
-        self.trainer_params.replay_buffer_max_size = 1000000
-        self.trainer_params.replay_buffer_min_size = 0
-        self.trainer_params.steps_per_epoch = 512
-        self.trainer_params.batch_size = 512
-        self.trainer_params.update_rate = 4
-        self.trainer_params.env_name = "InvertedDoublePendulum-v4"
-        self.trainer_params.save_location = "RL-Grimoire/saved_models/InvertedDoublePendulumAC2"
-
-
-class A2CPendulumConfig(Config):
-    def __init__(self):
-        super().__init__()
-
-        # Agent related parameters
-        self.agent_params.tau = 0.01
-        self.agent_params.gamma = 0.99
-        self.agent_params.policy_learning_rate = 1e-4
-        self.agent_params.value_learning_rate = 1e-3
-        self.agent_params.entropy_coefficient = 0.01
-        self.agent_params.hidden_size = 64
-
-        # Trainer related parameters
-        self.trainer_params.num_envs = 64       
-        self.trainer_params.num_epochs = 4000
-        self.trainer_params.replay_buffer_max_size = 1000000
-        self.trainer_params.replay_buffer_min_size = 0
-        self.trainer_params.steps_per_epoch = 8
-        self.trainer_params.batch_size = 64
-        self.trainer_params.update_rate = 1
-        self.trainer_params.env_name = "Pendulum-v1"
-        self.trainer_params.save_location = "RL-Grimoire/saved_models/PendulumAC2"
-        self.trainer_params.env_normalization_weights = np.array([1, 1,  0.125])
-
-
-class AgentParams:
+class AgentParams(object):
     def __init__(self,
             policy_learning_rate: float = 1e-4,
             value_learning_rate: float = 1e-3,
-            tau: float = 0.01,
             gamma: float = 0.99, 
             entropy_coefficient: float = 1e-2,
             hidden_size: int = 64
         ):
-        
         self.policy_learning_rate = policy_learning_rate
         self.value_learning_rate = value_learning_rate
-        self.tau = tau
         self.gamma = gamma
         self.entropy_coefficient = entropy_coefficient
         self.hidden_size = hidden_size
 
-
-class TrainerParams:
+class TrainerParams(object):
     def __init__(self,
-            num_envs: int = 8,
-            num_epochs: int = 1000,
-            steps_per_epoch: int = 512, 
+            learningRateScheduler: bool = False,
+            learningRateSchedulerClass: str = "ExponentialLR", # Valid names: ['LambdaLR', 'MultiplicativeLR', 'StepLR', 'MultiStepLR', 'ConstantLR', 'LinearLR', 'ExponentialLR', 'SequentialLR', 'CosineAnnealingLR', 'ChainedScheduler', 'ReduceLROnPlateau', 'CyclicLR', 'CosineAnnealingWarmRestarts', 'OneCycleLR', 'PolynomialLR', 'LRScheduler']
+            learningRateScheduleArgs: Dict[str, object] = { "gamma": 0.99 },
             replay_buffer_max_size: int = 1000000,
-            replay_buffer_min_size: int = 10000,
-            update_rate: int = 512,
-            batch_size: int = 512,  
-            render: bool = False,
-            env_name: str = "",
-            save_location: str = "",
-            env_normalization_weights: np.ndarray = np.array([])
+            replay_buffer_min_size: int = -1,
+            replay_buffer_remove_on_sample: bool = True, # Remove experiances after sampling
+            replay_buffer_shuffle_experiances: bool = False, # Shuffle experiances BEFORE sampling
+            batch_transitions_by_env_trajectory: bool = False, # Some on-policy algorithms need to preserve this, rather than just random sampling. Needed when calculating returns for per env.
+            num_envs: int = 1,
+            episode_length: int = -1, # Number of steps before reset is called
+            num_epochs: int = 1, 
+            batches_per_epoch: int = 1, # How many batches to collect each epoch
+            batch_size: int = 512,  # Size of training batch
+            updates_per_batch: int = 1, # Number of times to train on a batch
+            shuffle_batches: bool = False, # Shuffle batches AFTER sampling
+            render: bool = False, # Render the environment (may not be possible in vector environments)
+            env_name: str = "", # Name of the environment used in training (fused as save file name)
+            save_location: str = "", # Location of save file
+            env_normalization_weights: np.ndarray = np.array([]), # weights multiplied to state (used to normalize)
+            squeeze_actions: bool = False, # Remove empty dimension for actions. For example, needed when using only one env copy.
+            record_video_frequency: int = 1 # Record video after so meny epochs
         ):
+
+        # Schedulers
+        self.learningRateScheduler = learningRateScheduler
+        self.learningRateSchedulerClass = learningRateSchedulerClass
+        self.learningRateScheduleArgs = learningRateScheduleArgs
 
         # Replay buff settings
         self.replay_buffer_max_size = replay_buffer_max_size
         self.replay_buffer_min_size = replay_buffer_min_size
+        self.replay_buffer_remove_on_sample = replay_buffer_remove_on_sample
+        self.replay_buffer_shuffle_experiances = replay_buffer_shuffle_experiances
+        self.batch_transitions_by_env_trajectory = batch_transitions_by_env_trajectory
 
         # Training Params
         self.num_envs = num_envs
+        self.episode_length = episode_length
         self.num_epochs = num_epochs
-        self.steps_per_epoch = steps_per_epoch
+        self.batches_per_epoch = batches_per_epoch
         self.batch_size = batch_size
-        self.update_rate = update_rate
+        self.updates_per_batch = updates_per_batch
+        self.shuffle_batches = shuffle_batches
 
         # Env params
         self.render = render
         self.env_name = env_name
         self.save_location = save_location
         self.env_normalization_weights = env_normalization_weights
+        self.squeeze_actions = squeeze_actions
 
+        # Misc
+        self.record_video_frequency = record_video_frequency
 
+class REINFORCEParams(AgentParams):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
 
+class A2CParams(AgentParams):
+    def __init__(self, tau: float = 0.01, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.tau = tau
 
+class PPOParams(A2CParams):
+    def __init__(self, clip: float = 0.3, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.clip = clip
+
+class Config(object):
+    def __init__(self, agent_params, trainer_params: TrainerParams):
+        self.agent_params = agent_params
+        self.trainer_params = trainer_params     
 
 
 
