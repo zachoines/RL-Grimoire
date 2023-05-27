@@ -8,6 +8,7 @@ from torch import Tensor
 from torch.optim import Optimizer, AdamW
 from torch.distributions import Normal
 import torch.nn.functional as F
+from torch.nn.utils.clip_grad import clip_grad_norm_
 
 # Local imports
 from Datasets import Transition
@@ -29,6 +30,7 @@ class Agent:
         self.action_space = action_space
         self.device = device
         self.eps = 1e-8
+        self.max_grad_norm = .5
         self.hyperparams = hyperparams
         self.optimizers = {}
     
@@ -168,10 +170,12 @@ class PPO(Agent):
             # Optimize the models
             self.optimizers['actor'].zero_grad()
             loss.backward()
+            clip_grad_norm_(self.actor.parameters(), self.max_grad_norm)
             self.optimizers['actor'].step()
 
             self.optimizers['critic'].zero_grad()
             critic_loss.backward()
+            clip_grad_norm_(self.critic.parameters(), self.max_grad_norm)
             self.optimizers['critic'].step()
 
             # Update target network

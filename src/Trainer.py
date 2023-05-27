@@ -9,6 +9,7 @@ import torch
 from torch import Tensor
 
 # Local imports
+from Utilities import RunningMeanStd
 from Agents import Agent
 from Datasets import ExperienceBuffer, Transition
 from Configurations import TrainerParams
@@ -36,6 +37,7 @@ class Trainer:
         self.save_location = save_location
         self.writer = SummaryWriter()
         self.test_callback = test_callback
+        self.env_running_mean_std = RunningMeanStd(shape = env.observation_space.shape)
     
         if np.any(hyperparams.env_normalization_weights):
             self.state *= hyperparams.env_normalization_weights
@@ -113,6 +115,7 @@ class Trainer:
             other = other.cpu().detach()
             action = action.cpu().numpy().squeeze(-1) if self.hyperparams.squeeze_actions else action.cpu().numpy()
             next_state, reward, done, _, _ = self.env.step(action)
+            # self.env_running_mean_std.update(next_state)
             if np.any(self.hyperparams.env_normalization_weights):
                 next_state *= self.hyperparams.env_normalization_weights
             self.writer.add_scalar(tag="Step Rewards", scalar_value=reward.mean(), global_step=self.current_step) # type: ignore
