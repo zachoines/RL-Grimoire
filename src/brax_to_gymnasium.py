@@ -1,4 +1,4 @@
-from typing import Optional, Union, ClassVar, Dict
+from typing import Optional, Union, ClassVar, Dict, Any
 import jax
 import numpy as np
 import cv2
@@ -7,11 +7,12 @@ import os
 import gymnasium as gym
 from gymnasium import spaces
 
-from brax.v1.io import torch
+import torch
+from brax.v1.io import torch as b_torch
 from brax.v1.envs import env as brax_env
 from brax.v1 import jumpy as jp
 
-
+from Utilities import to_tensor
 
 class GymWrapper(gym.Env):
 
@@ -89,20 +90,23 @@ class VectorGymWrapper(gym.vector.VectorEnv):
         backend: Optional[str] = None, 
         record: bool = True, 
         record_location: str = 'videos/',
-        record_name_prefix: str = '' 
+        record_name_prefix: str = '',
+        recording_save_frequeny: int = 256
     ):
 
     # Record related variables 
     self._record = record
     self._record_location = record_location
     self._record_name_prefix = record_name_prefix
+    self._recording_save_frequeny = recording_save_frequeny
+    self._steps = 0
     self._episode = 0
     self._recording = False
+    self._image_buffer = []
     self._session_video = cv2.VideoWriter(
-        os.path.join(self._record_location, self._record_name_prefix) + '_' + str(self._episode) + '.mp4' , 
-        apiPreference = 0, 
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v'), 
-        fps = 24, 
+        os.path.join(self._record_location, self._record_name_prefix) + '_' + str(self._episode) + '.mp4' ,
+        fourcc = cv2.VideoWriter_fourcc(*'avc1'),
+        fps = 20, 
         frameSize = (256, 256)
     )
 
@@ -141,39 +145,53 @@ class VectorGymWrapper(gym.vector.VectorEnv):
     def step(state, action):
       state = self._env.step(state, action)
       info = {**state.metrics, **state.info}
-      return state, state.obs, state.reward, state.done, info
+      return state, state.obs, state.reward, state.done, state.info["truncation"], info
 
     self._step = jax.jit(step, backend=self.backend)
 
   def reset(self):
-    self._episode += 1
-    if self._record:
-        if self._recording:
-            self._session_video.release()
-        else:
-            self._recording = True
-      
     self._state, obs, self._key = self._reset(self._key)
     return obs, {}
   
+  def release_video(self):
+    if self._record:
+        if self._recording:
+            if len(self._image_buffer) > 1:
+                self._episode +=1
+                for image in self._image_buffer:
+                    self._session_video.write(image)
+                self._session_video.release()
+                self._session_video = cv2.VideoWriter(
+                    os.path.join(self._record_location, self._record_name_prefix) + '_' + str(self._episode) + '.mp4' ,
+                    fourcc = cv2.VideoWriter_fourcc(*'avc1'), 
+                    fps = 20, 
+                    frameSize = (256, 256)
+                )
+                self._image_buffer = []
+        else:
+            self._recording = True
+  
   def close(self):
-    if self._record and self._recording:
-        self._session_video.release()
+    self.release_video()
 
   def step(self, action):
-    self._state, obs, reward, done, info = self._step(self._state, action)
+    self._steps += 1
+    self._state, obs, reward, done, truncs, info = self._step(self._state, action)
 
-    if self._record:
-        try:
-            self._session_video.write(self.render('rgb_array'))
-        except:
-            print("There was an issue generating episode video.")
+    if self._record and self._recording:
+        self._image_buffer.append(self.render('rgb_array'))
+
+        if (self._steps % self._recording_save_frequeny) == 0:
+            self.release_video()
         
-        
-    return obs, reward, done, {}, info
+    return obs, reward, done, truncs, info
 
   def seed(self, seed: int = 0):
     self._key = jax.random.PRNGKey(seed)
+
+  def toggle_recording(self, state: bool):
+    if self._record:
+        self._recording = state
 
   def render(self, mode='human'):
     from brax.v1.io import image
@@ -190,35 +208,39 @@ class JaxToTorchWrapper(gym.Wrapper):
 
   def __init__(self,
                env: GymWrapper | VectorGymWrapper,
-               device: Optional[torch.Device] = None):
+               device: Optional[b_torch.Device] = None):
     super().__init__(env)
-    self.device: Optional[torch.Device] = device
+    self.device: Optional[b_torch.Device] = device
     self.env = env
 
-  def observation(self, observation):
-    return torch.jax_to_torch(observation, device=self.device)
+  def observation(self, observation) -> torch.Tensor:
+    return b_torch.jax_to_torch(observation, device=self.device)
 
-  def action(self, action):
-    return torch.torch_to_jax(action)
+  def action(self, action: torch.Tensor):
+    return b_torch.torch_to_jax(action)
 
-  def reward(self, reward):
-    return torch.jax_to_torch(reward, device=self.device)
+  def reward(self, reward)-> torch.Tensor:
+    return b_torch.jax_to_torch(reward, device=self.device)
 
-  def done(self, done):
-    return torch.jax_to_torch(done, device=self.device)
+  def done(self, done)-> torch.Tensor:
+    return b_torch.jax_to_torch(done, device=self.device)
 
-  def info(self, info):
-    return torch.jax_to_torch(info, device=self.device)
+  def info(self, info)-> torch.Tensor:
+    return b_torch.jax_to_torch(info, device=self.device)
+  
+  def truncation(self, truncs)-> torch.Tensor:
+    return b_torch.jax_to_torch(truncs, device=self.device)
 
-  def reset(self):
+  def reset(self) -> tuple[torch.Tensor, dict]:
     obs, info = self.env.reset()
     return self.observation(obs), info
 
-  def step(self, action):
+  def step(self, action: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     action = self.action(action)
     obs, reward, done, truncs, info= super().step(action)
     obs = self.observation(obs)
     reward = self.reward(reward)
     done = self.done(done)
     info = self.info(info)
+    truncs = self.truncation(truncs)
     return obs, reward, done, truncs, info

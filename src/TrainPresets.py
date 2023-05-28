@@ -85,7 +85,7 @@ class PPOAntConfig(Config):
                 policy_learning_rate = 1e-4,
                 value_learning_rate = 1e-5,
                 entropy_coefficient = 0.05,
-                hidden_size = 128
+                hidden_size = 256
             ),
             TrainerParams(
                 num_envs = 128,
@@ -95,6 +95,7 @@ class PPOAntConfig(Config):
                 batch_size = 1024,
                 updates_per_batch = 8,
                 shuffle_batches = True,
+                env_normalization=True,
                 env_name = "Ant-v4",
                 save_location = "RL-Grimoire/saved_models/AntPPO",
             )
@@ -105,22 +106,23 @@ class PPOBraxAntConfig(Config):
     def __init__(self):
         super().__init__(
             PPOParams(
-                tau = 0.01,
+                tau = 0.1,
                 clip = 0.3,
                 gamma = 0.97,
                 policy_learning_rate = 1e-4,
-                value_learning_rate = 1e-5,
-                entropy_coefficient = 0.05,
-                hidden_size = 128
+                value_learning_rate = 1e-3,
+                entropy_coefficient = 0.1,
+                hidden_size = 256
             ),
             TrainerParams(
-                num_envs = 128,
-                episode_length = 512,
-                num_epochs = 500,
-                batches_per_epoch = 8,
-                batch_size = 1024,
+                num_envs = 16, # 64,
+                episode_length = 512, # 512,
+                num_epochs = 1000,
+                batches_per_epoch = 16,
+                batch_size = 256,
                 updates_per_batch = 8,
                 shuffle_batches = True,
+                record_video_frequency=10,
                 env_name = "ant",
                 save_location = "RL-Grimoire/saved_models/AntPPO",
             )

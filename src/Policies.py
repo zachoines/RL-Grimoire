@@ -30,7 +30,7 @@ class GaussianGradientPolicyV2(nn.Module):
         super().__init__()
 
         # Shared Network
-        hidden_space1 = hidden_size # int(hidden_size / 2)
+        hidden_space1 = int(hidden_size / 2)
         hidden_space2 = hidden_size
         self.shared_net = nn.Sequential(
             nn.Linear(in_features, hidden_space1),

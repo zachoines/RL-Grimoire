@@ -25,6 +25,7 @@ class TrainerParams(object):
             replay_buffer_remove_on_sample: bool = True, # Remove experiances after sampling
             replay_buffer_shuffle_experiances: bool = False, # Shuffle experiances BEFORE sampling
             batch_transitions_by_env_trajectory: bool = False, # Some on-policy algorithms need to preserve this, rather than just random sampling. Needed when calculating returns for per env.
+            on_policy_training: bool = True, # In short: Trains only on recently collected experiances, replay buffer doesn't store experiences.
             num_envs: int = 1,
             episode_length: int = -1, # Number of steps before reset is called
             num_epochs: int = 1, 
@@ -35,7 +36,7 @@ class TrainerParams(object):
             render: bool = False, # Render the environment (may not be possible in vector environments)
             env_name: str = "", # Name of the environment used in training (fused as save file name)
             save_location: str = "", # Location of save file
-            env_normalization_weights: np.ndarray = np.array([]), # weights multiplied to state (used to normalize)
+            env_normalization: bool = False, # weights multiplied to state (used to normalize)
             squeeze_actions: bool = False, # Remove empty dimension for actions. For example, needed when using only one env copy.
             record_video_frequency: int = 1 # Record video after so meny epochs
         ):
@@ -51,6 +52,7 @@ class TrainerParams(object):
         self.replay_buffer_remove_on_sample = replay_buffer_remove_on_sample
         self.replay_buffer_shuffle_experiances = replay_buffer_shuffle_experiances
         self.batch_transitions_by_env_trajectory = batch_transitions_by_env_trajectory
+        self.on_policy_training = on_policy_training 
 
         # Training Params
         self.num_envs = num_envs
@@ -65,7 +67,7 @@ class TrainerParams(object):
         self.render = render
         self.env_name = env_name
         self.save_location = save_location
-        self.env_normalization_weights = env_normalization_weights
+        self.env_normalization = env_normalization
         self.squeeze_actions = squeeze_actions
 
         # Misc

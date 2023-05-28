@@ -43,7 +43,7 @@ class Agent:
     def state_dict(self)-> Dict[str,Dict]:
         raise NotImplementedError
 
-    def get_actions(self, state: np.ndarray, eval=False)->tuple[Tensor, Tensor]:
+    def get_actions(self, state: torch.Tensor, eval=False)->tuple[Tensor, Tensor]:
         raise NotImplementedError
     
     def get_optimizers(self) -> Dict[str, Optimizer]:
@@ -108,10 +108,9 @@ class PPO(Agent):
         
         self.optimizers = self.get_optimizers()
         
-    def get_actions(self, state: np.ndarray, eval=False)->tuple[Tensor, Tensor]:
+    def get_actions(self, state: torch.Tensor, eval=False)->tuple[Tensor, Tensor]:
         if self.is_continous():
-            state_tensor = torch.tensor(state, device=self.device, dtype=torch.float32)
-            mean, std = self.actor(state_tensor)
+            mean, std = self.actor(state)
             mean = self.rescaleAction(mean, self.action_min, self.action_max)
 
             if eval:
@@ -126,28 +125,28 @@ class PPO(Agent):
     def learn(self, batch: list[Transition], num_envs: int, batch_size: int)->dict[str, Tensor]:
     
         # Reshape batch to gathered lists 
-        states, actions, next_states, rewards, dones, other = map(np.stack, zip(*batch))
+        states, actions, next_states, rewards, dones, other = map(torch.stack, zip(*batch))
 
         # Reshape data
         num_samples = batch_size
-        states = torch.tensor(states, device=self.device, dtype=torch.float32).reshape(num_samples, -1)
-        actions = torch.tensor(actions, device=self.device, dtype=torch.float32 if self.is_continous() else torch.int64).reshape(num_samples, -1)
-        next_states = torch.tensor(next_states, device=self.device, dtype=torch.float32).reshape(num_samples, -1)
-        rewards = torch.tensor(rewards, device=self.device, dtype=torch.float32).reshape(num_samples, -1)
-        dones = torch.tensor(dones, device=self.device, dtype=torch.float32).reshape(num_samples, -1)
-        other = torch.tensor(other, device=self.device, dtype=torch.float32).reshape(num_samples, -1)
-        rewards_normalized = (rewards - rewards.mean()) / (rewards.std() + self.eps)
+        states = states.reshape(num_samples, -1).to(device=self.device, dtype=torch.float32)
+        actions = actions.reshape(num_samples, -1).to(device=self.device, dtype=torch.float32 if self.is_continous() else torch.int64)
+        next_states = next_states.reshape(num_samples, -1).to(device=self.device, dtype=torch.float32)
+        rewards = rewards.reshape(num_samples, -1).to(device=self.device, dtype=torch.float32)
+        dones = dones.reshape(num_samples, -1).to(device=self.device, dtype=torch.float32)
+        other = other.reshape(num_samples, -1).to(device=self.device, dtype=torch.float32)
+        # rewards_normalized = (rewards - rewards.mean()) / (rewards.std() + self.eps)
 
         if self.is_continous():
             state_values = self.critic(states)
 
             with torch.no_grad():
                 next_state_values = self.target_critic(next_states)
-                target = rewards_normalized + (self.hyperparams.gamma * (1.0 - dones) * next_state_values)
+                target = rewards + (self.hyperparams.gamma * (1.0 - dones) * next_state_values)
                 advantages = target - state_values
 
             # Critic loss
-            critic_loss = F.mse_loss(state_values, target)
+            critic_loss = F.smooth_l1_loss(state_values, target)
 
             # Policy loss and entropy
             new_loc, new_scale = self.actor(states)
@@ -170,12 +169,12 @@ class PPO(Agent):
             # Optimize the models
             self.optimizers['actor'].zero_grad()
             loss.backward()
-            clip_grad_norm_(self.actor.parameters(), self.max_grad_norm)
+            # clip_grad_norm_(self.actor.parameters(), self.max_grad_norm)
             self.optimizers['actor'].step()
 
             self.optimizers['critic'].zero_grad()
             critic_loss.backward()
-            clip_grad_norm_(self.critic.parameters(), self.max_grad_norm)
+            # clip_grad_norm_(self.critic.parameters(), self.max_grad_norm)
             self.optimizers['critic'].step()
 
             # Update target network
@@ -241,10 +240,9 @@ class A2C(Agent):
         
         self.optimizers = self.get_optimizers()
         
-    def get_actions(self, state: np.ndarray, eval=False)->tuple[Tensor, Tensor]:
+    def get_actions(self, state: torch.Tensor, eval=False)->tuple[Tensor, Tensor]:
         if self.is_continous():
-            state_tensor = torch.tensor(state, device=self.device, dtype=torch.float32)
-            mean, std = self.actor(state_tensor)
+            mean, std = self.actor(state)
             mean = self.rescaleAction(mean, self.action_min, self.action_max)
 
             if eval:
@@ -363,19 +361,16 @@ class REINFORCE(Agent):
 
         self.optimizers = self.get_optimizers()
         
-    def get_actions(self, state: np.ndarray, eval=False)->tuple[Tensor, Tensor]:
+    def get_actions(self, state: torch.Tensor, eval=False)->tuple[Tensor, Tensor]:
         if self.is_discrete():
             if eval:
-                state_tensor = torch.tensor(state, device=self.device, dtype=torch.float32, requires_grad=False)
-                action_probs = self.policy(state_tensor)
+                action_probs = self.policy(state)
                 return torch.argmax(action_probs), action_probs
             else:
-                state_tensor = torch.tensor(state, device=self.device, dtype=torch.float32, requires_grad=False)
-                probas = self.policy(state_tensor)
+                probas = self.policy(state)
                 return torch.multinomial(probas, 1).int(), probas
         elif self.is_continous():
-            state_tensor = torch.tensor(state, device=self.device, dtype=torch.float32)
-            mean, std = self.policy(state_tensor)
+            mean, std = self.policy(state)
 
             if eval:
                 return mean, torch.concat((mean, std), dim=-1)

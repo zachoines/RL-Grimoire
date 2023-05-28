@@ -6,6 +6,8 @@ import os
 import torch
 import random
 
+from typing import Any
+
 
 def set_random_seeds(seed=42):
    os.environ['PYTHONHASHSEED']=str(seed)
@@ -29,14 +31,18 @@ def test_policy(env, agent, num_episodes=5, max_steps=1024, normalization_weight
                 next_state, _, _, _, _ = env.step(action)
                 state = next_state
 
+def to_tensor(x: Any, device = torch.device("cpu"), dtype=torch.float32, requires_grad=True):
+    return torch.tensor(x, device=device, dtype=dtype, requires_grad=requires_grad)
+
 class RunningMeanStd:
 
     def __init__(self, epsilon=1e-4, shape=(), device : torch.device = torch.device("cpu")):
-        self.mean = torch.zeros(shape, dtype=torch.float32).to(device)
-        self.var = torch.ones(shape, dtype=torch.float32).to(device)
+        self.mean = torch.zeros(shape[-1], dtype=torch.float32).to(device)
+        self.var = torch.ones(shape[-1], dtype=torch.float32).to(device)
         self.count = epsilon
+        self.device = device
 
-    def update(self, x):
+    def update(self, x: torch.Tensor):
         batch_mean = torch.mean(x, dim=0)
         batch_var = torch.var(x, dim=0)
         batch_count = x.shape[0]
@@ -51,5 +57,16 @@ class RunningMeanStd:
         self.var = M2 / tot_count
         self.count = tot_count
 
-    def normalize(self,x):
-        return (x - self.mean) / torch.sqrt(self.var + 1e-8)
+    def normalize(self, x: torch.Tensor) -> torch.Tensor:
+        return ((x - self.mean) / torch.sqrt(self.var + 1e-8)).to(self.device)
+    
+    def save(self, loc='./normalizer'):
+        torch.save({
+            "means": self.mean,
+            "vars" : self.var
+        }, loc)
+
+    def load(self, loc='./normalizer'):
+        data = torch.load(loc)
+        self.mean = data["means"]
+        self.var = data["vars"]

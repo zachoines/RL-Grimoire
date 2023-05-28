@@ -6,10 +6,10 @@ class ValueNetwork(nn.Module):
         super().__init__()
         
         self.value_net = nn.Sequential(
-            nn.Linear(in_features, hidden_size),
-            nn.Tanh(),
-            nn.Linear(hidden_size, hidden_size),
-            nn.Tanh(),
+            nn.Linear(in_features, int(hidden_size / 2.0)),
+            nn.LeakyReLU(),
+            nn.Linear(int(hidden_size / 2.0), hidden_size),
+            nn.LeakyReLU(),
             nn.Linear(hidden_size, 1)
         )
         
