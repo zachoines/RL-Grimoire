@@ -1,4 +1,11 @@
-# Note: may need to run: export PYTHONPATH="RL-Grimoire/src"
+import sys
+import os
+
+# Get the current directory and append the 'src' folder path to sys.path
+# Note: May still need to run: export PYTHONPATH="RL-Grimoire/src"
+current_dir = os.path.dirname(os.path.abspath(__file__))
+src_path = os.path.join(current_dir, 'src')
+sys.path.append(src_path)
 
 import torch
 import gymnasium as gym
@@ -79,32 +86,3 @@ if __name__ == "__main__":
     running_mean_std_recorder.save(loc=config.trainer_params.save_location + "NormStates")
     pbar.close()
     env.close()
-    
-    # Test the environment
-    # env = gym.make(config.trainer_params.env_name, render_mode="rgb_array")
-    # agent = Agent(observation_space = env.observation_space, action_space = env.action_space, hyperparams=config.agent_params, device=device)
-    # agent.load(config.trainer_params.save_location)
-    # test_policy(env, agent, normalization_weights=config.trainer_params.env_normalization_weights)
-
-    # env = gym.vector.make(config.trainer_params.env_name, num_envs=config.trainer_params.num_envs)
-    # Test callback
-    # def test_callback(agent: Agent):
-    #     current_datetime = datetime.now()
-    #     current_date_string = current_datetime.strftime("%Y-%m-%d_%H-%M-%S")
-    #     test_env = gym.make(config.trainer_params.env_name, render_mode="rgb_array")
-    #     test_env = RecordVideo(
-    #         test_env,
-    #         video_folder='videos/',
-    #         name_prefix=f"{config.trainer_params.env_name}_{current_date_string}"
-    #     )
-
-    #     state, _ = test_env.reset()
-    #     with torch.no_grad():
-    #         for _ in range(512):
-    #             if np.any(config.trainer_params.env_normalization_weights):
-    #                 state *= config.trainer_params.env_normalization_weights
-    #             action, _ = agent.get_actions(state, eval=False)
-    #             next_state, _, _, _, _ = test_env.step(action.cpu().numpy())
-    #             state = next_state
-            
-    #     test_env.close()

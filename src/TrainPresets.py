@@ -115,15 +115,15 @@ class PPOBraxAntConfig(Config):
                 hidden_size = 256
             ),
             TrainerParams(
-                num_envs = 16, # 64,
+                num_envs = 256, # 64,
                 episode_length = 512, # 512,
                 num_epochs = 1000,
                 batches_per_epoch = 16,
-                batch_size = 256,
+                batch_size = 1024,
                 updates_per_batch = 8,
                 shuffle_batches = True,
                 record_video_frequency=10,
                 env_name = "ant",
-                save_location = "RL-Grimoire/saved_models/AntPPO",
+                save_location = "saved_models/AntPPO",
             )
         )
