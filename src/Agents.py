@@ -30,7 +30,7 @@ class Agent:
         self.action_space = action_space
         self.device = device
         self.eps = 1e-8
-        self.max_grad_norm = .5
+        self.max_grad_norm = 1.0
         self.hyperparams = hyperparams
         self.optimizers = {}
     
@@ -77,7 +77,7 @@ class Agent:
 class PPO(Agent):
     def __init__(
             self,
-            observation_space: Space,
+        observation_space: Space,
             action_space: Space,
             hyperparams: PPOParams, 
             device = torch.device("cpu")
@@ -169,12 +169,12 @@ class PPO(Agent):
             # Optimize the models
             self.optimizers['actor'].zero_grad()
             loss.backward()
-            # clip_grad_norm_(self.actor.parameters(), self.max_grad_norm)
+            clip_grad_norm_(self.actor.parameters(), self.max_grad_norm)
             self.optimizers['actor'].step()
 
             self.optimizers['critic'].zero_grad()
             critic_loss.backward()
-            # clip_grad_norm_(self.critic.parameters(), self.max_grad_norm)
+            clip_grad_norm_(self.critic.parameters(), self.max_grad_norm)
             self.optimizers['critic'].step()
 
             # Update target network
@@ -257,15 +257,15 @@ class A2C(Agent):
     def learn(self, batch: list[Transition], num_envs: int, batch_size: int)->dict[str, Tensor]:
         
         # Reshape batch to gathered lists 
-        states, actions, next_states, rewards, dones, _ = map(np.stack, zip(*batch))
+        states, actions, next_states, rewards, dones, other = map(torch.stack, zip(*batch))
 
         # Reshape data
-        num_samples = batch_size
-        states = torch.tensor(states, device=self.device, dtype=torch.float32).reshape(num_samples, -1)
-        actions = torch.tensor(actions, device=self.device, dtype=torch.float32 if self.is_continous() else torch.int64).reshape(num_samples, -1)
-        next_states = torch.tensor(next_states, device=self.device, dtype=torch.float32).reshape(num_samples, -1)
-        rewards = torch.tensor(rewards, device=self.device, dtype=torch.float32).reshape(num_samples, -1)
-        dones = torch.tensor(dones, device=self.device, dtype=torch.float32).reshape(num_samples, -1)
+        states = states.reshape(batch_size, -1).to(device=self.device, dtype=torch.float32)
+        actions = actions.reshape(batch_size, -1).to(device=self.device, dtype=torch.float32 if self.is_continous() else torch.int64)
+        next_states = next_states.reshape(batch_size, -1).to(device=self.device, dtype=torch.float32)
+        rewards = rewards.reshape(batch_size, -1).to(device=self.device, dtype=torch.float32)
+        dones = dones.reshape(batch_size, -1).to(device=self.device, dtype=torch.float32)
+        other = other.reshape(batch_size, -1).to(device=self.device, dtype=torch.float32)
         rewards_normalized = (rewards - rewards.mean()) / (rewards.std() + self.eps)
 
         if self.is_continous():

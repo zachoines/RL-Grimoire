@@ -1,4 +1,4 @@
-from typing import Optional, Union, ClassVar, Dict, Any
+from typing import Optional, ClassVar, Dict, Any
 import jax
 import numpy as np
 import cv2
@@ -11,8 +11,31 @@ import torch
 from brax.v1.io import torch as b_torch
 from brax.v1.envs import env as brax_env
 from brax.v1 import jumpy as jp
+import brax.v1.envs as envs
+from datetime import datetime
 
-from Utilities import to_tensor
+def convert_brax_to_gym(name: str, **kwargs):
+    device = torch.device(
+        "mps" if torch.has_mps else "cpu" or # MACOS
+        "cuda" if torch.has_cuda else 
+        "cpu"
+    )
+    # Create the environment
+    current_datetime = datetime.now()
+    current_date_string = current_datetime.strftime("%Y-%m-%d_%H-%M-%S")
+    env = envs.create(
+        name,
+        **kwargs
+    )
+    env = VectorGymWrapper(
+        env,
+        record = True, 
+        record_location = 'videos/',
+        record_name_prefix = f"{name}_{current_date_string}",
+        recording_save_frequeny = 512
+    )
+    env = JaxToTorchWrapper(env, device)
+    return env
 
 class GymWrapper(gym.Env):
 

@@ -1,5 +1,6 @@
 import numpy as np
 import gymnasium as gym
+import importlib
 from typing import List, Dict
 
 # Torch imports
@@ -9,44 +10,43 @@ import torch
 from torch import Tensor
 
 # Local imports
-from Utilities import RunningMeanStd
+from Utilities import RunningMeanStd, to_tensor
 from Agents import Agent
 from Datasets import ExperienceBuffer, Transition
-from Configurations import TrainerParams
-import importlib
-
+from Configurations import TrainerParams, EnvParams
 
 class Trainer:
     def __init__(self,
         agent: Agent, 
         env: gym.Env,
-        hyperparams: TrainerParams,
+        train_params: TrainerParams,
+        env_params: EnvParams,
         save_location: str,
-        normalizer: RunningMeanStd,
-        test_callback = None
+        normalizer: RunningMeanStd = RunningMeanStd(),
+        device = torch.device("cpu")
     ):
                 
         self.agent = agent
-        self.exp_buffer = ExperienceBuffer(hyperparams.replay_buffer_max_size)
+        self.exp_buffer = ExperienceBuffer(train_params.replay_buffer_max_size)
         self.env = env
-        self.hyperparams = hyperparams
+        self.train_params = train_params
+        self.env_params = env_params
         self.current_epoch = 0
         self.current_update = 0
         self.current_step = 0
         self.optimizers = {}
         self.save_location = save_location
         self.writer = SummaryWriter()
-        self.test_callback = test_callback
         self.normalizer = normalizer
         self.state : torch.Tensor
+        self.device = device
 
         self.reset()
-
         self.learning_rate_schedulers = {}
-        if hyperparams.learningRateScheduler:
+        if train_params.learningRateScheduler:
             for network_name, optimizer in self.agent.optimizers.items():
-                class_ = getattr(importlib.import_module("torch.optim.lr_scheduler"), hyperparams.learningRateSchedulerClass)
-                learning_rate_scheduler: lr_scheduler.LRScheduler = class_(optimizer, **hyperparams.learningRateScheduleArgs)
+                class_ = getattr(importlib.import_module("torch.optim.lr_scheduler"), train_params.learningRateSchedulerClass)
+                learning_rate_scheduler: lr_scheduler.LRScheduler = class_(optimizer, **train_params.learningRateScheduleArgs)
                 self.learning_rate_schedulers[network_name] = learning_rate_scheduler
 
 
@@ -71,22 +71,22 @@ class Trainer:
 
     def model_step(self)->dict[str, Tensor]:
         batch = self.exp_buffer.sample(
-            self.hyperparams.batch_size, 
-            remove=self.hyperparams.replay_buffer_remove_on_sample, 
-            shuffle=self.hyperparams.replay_buffer_shuffle_experiances
+            self.train_params.batch_size, 
+            remove=self.train_params.replay_buffer_remove_on_sample, 
+            shuffle=self.train_params.replay_buffer_shuffle_experiances
         )
         self.current_update += 1
         train_results = []
-        for _ in range(self.hyperparams.updates_per_batch):
-            if self.hyperparams.shuffle_batches:
+        for _ in range(self.train_params.updates_per_batch):
+            if self.train_params.shuffle_batches:
                 np.random.shuffle(batch)
-            train_results.append(self.agent.learn(batch, self.hyperparams.num_envs, self.hyperparams.batch_size))
+            train_results.append(self.agent.learn(batch, self.env_params.num_envs, self.train_params.batch_size))
 
-        if self.hyperparams.learningRateScheduler:
+        if self.train_params.learningRateScheduler:
             for _, scheduler in self.learning_rate_schedulers.items():
                 scheduler.step()
 
-        if self.hyperparams.on_policy_training:
+        if self.train_params.on_policy_training:
             self.exp_buffer.empty()
         
         return self.reduce_dicts_to_avg(train_results)
@@ -95,7 +95,7 @@ class Trainer:
         for metric, value in train_results.items():
             self.writer.add_scalar(tag=metric, scalar_value=value, global_step=self.current_update)
 
-        if self.hyperparams.learningRateScheduler:
+        if self.train_params.learningRateScheduler:
             for name, scheduler in self.learning_rate_schedulers.items():
                 [value] = scheduler.get_last_lr()
                 self.writer.add_scalar(tag=name + " learning rate scheduler", scalar_value=value, global_step=self.current_update)
@@ -109,74 +109,64 @@ class Trainer:
     
     def reset(self):
         self.state, _ = self.env.reset()
-        if self.hyperparams.env_normalization:
+        if self.env_params.env_normalization:
             self.state = self.normalizer.normalize(self.state)
 
     def step(self):
         
-        if self.hyperparams.render:
+        if self.train_params.render:
             self.env.render()
         
         with torch.no_grad():
             self.current_step += 1
+            if self.state.__class__ == np.ndarray:
+                self.state = to_tensor(self.state, device=self.device)
             action, other = self.agent.get_actions(self.state)
             other = other.cpu()
-            action = action.cpu().squeeze(-1) if self.hyperparams.squeeze_actions else action.cpu()
+            action = action.cpu().squeeze(-1) if self.train_params.squeeze_actions else action.cpu()
             next_state, reward, done, _, _ = self.env.step(action)
-            if self.hyperparams.env_normalization:
+
+            # Convert to tensor if not
+            if next_state.__class__ == np.ndarray:
+                next_state = to_tensor(next_state, device=self.device)
+
+            if reward.__class__ == np.ndarray:
+                reward = to_tensor(reward, device=self.device)
+
+            if done.__class__ == np.ndarray:
+                done = to_tensor(done, device=self.device)
+            
+            if self.env_params.env_normalization:
                 next_state = self.normalizer.normalize(next_state)
             
             self.writer.add_scalar(tag="Step Rewards", scalar_value=reward.mean(), global_step=self.current_step) # type: ignore
-
-            # if (self.current_step % self.hyperparams.episode_length ) == 0:
-            #     done = torch.ones_like(done, dtype=torch.bool) # type: ignore
             
-            if self.hyperparams.batch_transitions_by_env_trajectory:
+            if self.train_params.batch_transitions_by_env_trajectory:
                 self.exp_buffer.append([Transition(self.state, action, next_state, reward, done, other)])
             else:
                 self.exp_buffer.append([Transition(s, a, n_s, r, d, o) for s, a, n_s, r, d, o in zip(self.state, action, next_state, reward, done, other)]) # type: ignore
             self.state = next_state
 
-            # if (self.current_step % self.hyperparams.episode_length ) == 0:
-            #     self.state, _ = self.env.reset()
-            #     if self.hyperparams.env_normalization:
-            #         self.state = self.normalizer.normalize(self.state)
-
     def __next__(self):
 
         # Stop after reaching max epochs
         self.current_epoch += 1
-        if self.current_epoch > self.hyperparams.num_epochs:
+        if self.current_epoch > self.train_params.num_epochs:
             self.writer.close()
             self.env.close()
             raise StopIteration
         
         # Collect experiances
-        for _ in range(self.hyperparams.batches_per_epoch):
+        for _ in range(self.train_params.batches_per_epoch):
             self.step()
 
             # Fill up buffer
-            while (len(self.exp_buffer) < self.hyperparams.batch_size): 
+            while (len(self.exp_buffer) < self.train_params.batch_size): 
                 self.step()
 
             # Update with batch
             self.log_step(self.model_step())
 
-            # for _ in range(self.hyperparams.sam):  
-            #     self.step()
-
-            #     # Fill up buffer if needed
-            #     while len(self.exp_buffer) < self.hyperparams.replay_buffer_min_size:
-            #         self.step() 
-
-            #     # Take an update with batch
-            #     if len(self.exp_buffer) >= self.hyperparams.batch_size:
-            #         self.log_step(self.model_step())
-
-        # Test the policy
-        # if (self.current_epoch % self.hyperparams.record_video_frequency) == 0:
-        #     self.reset()
-        
         # Save parameters
         self.save_model()
         return self.current_epoch

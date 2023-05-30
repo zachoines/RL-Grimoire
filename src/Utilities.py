@@ -1,6 +1,5 @@
 import torch 
 import gymnasium as gym
-from gymnasium.wrappers import RecordVideo # type: ignore
 import numpy as np
 import os
 import torch
@@ -15,19 +14,15 @@ def set_random_seeds(seed=42):
    np.random.seed(seed)
    random.seed(seed)
 
-def test_policy(env, agent, num_episodes=5, max_steps=1024, normalization_weights=np.array([]), video=True):
-    if video:
-        env = RecordVideo(env, 'videos', episode_trigger=lambda e: True)
+def test_policy(env, agent, num_episodes=5, max_steps=1024, normalizor = None,):
     with torch.no_grad():
         for _ in range(num_episodes):
             state, _ = env.reset()
             for _ in range(max_steps):
-                if not video:
-                    env.render()
-                if np.any(normalization_weights):
-                    state *= normalization_weights
+                if normalizor != None:
+                    state = normalizor.normalize(state)
                 action, _ = agent.get_actions(state, eval=True)
-                action = action.cpu().numpy()
+                action = action.cpu()
                 next_state, _, _, _, _ = env.step(action)
                 state = next_state
 
@@ -36,7 +31,7 @@ def to_tensor(x: Any, device = torch.device("cpu"), dtype=torch.float32, require
 
 class RunningMeanStd:
 
-    def __init__(self, epsilon=1e-4, shape=(), device : torch.device = torch.device("cpu")):
+    def __init__(self, epsilon=1e-4, shape=(1, 1), device : torch.device = torch.device("cpu")):
         self.mean = torch.zeros(shape[-1], dtype=torch.float32).to(device)
         self.var = torch.ones(shape[-1], dtype=torch.float32).to(device)
         self.count = epsilon
