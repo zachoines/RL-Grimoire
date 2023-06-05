@@ -88,13 +88,13 @@ class A2CInvertedDoublePendulumConfig(Config):
 
 class PPOBraxAntConfig(Config):
     def __init__(self):
-        self.max_episode_steps = 512
+        self.max_episode_steps = 1024
         self.num_envs = 256
         super().__init__(
             PPOParams(
                 tau = 0.05,
-                clip = 0.2,
-                gamma = 0.98,
+                clip = 0.3,
+                gamma = 0.9,
                 policy_learning_rate = 1e-5,
                 value_learning_rate = 1e-4,
                 entropy_coefficient = 0.05,
@@ -118,11 +118,94 @@ class PPOBraxAntConfig(Config):
                 misc_arguments = {
                     "batch_size": self.num_envs, # Brax's convention uses batch_size for num_environments
                     "episode_length": self.max_episode_steps,
-                    "healthy_reward": 0.5,
-                    "ctrl_cost_weight": 1.0,
-                    "contact_cost_weight": 1e-3,
-                    "use_contact_forces": True,
+                    "healthy_reward": 1.5,
+                    "ctrl_cost_weight": .5,
+                    "contact_cost_weight": 1e-4,
+                    "use_contact_forces": False,
                     "terminate_when_unhealthy": True
+                }
+            )
+        )
+
+class PPO2BraxAntConfig(Config):
+    def __init__(self):
+        self.max_episode_steps = 1024
+        self.num_envs = 1024
+
+        super().__init__(
+            PPO2Params(
+                clip = 0.3,
+                gamma = 0.99,
+                policy_learning_rate = 2e-4,
+                value_learning_rate = 2e-3,
+                entropy_coefficient = 0.01,
+                hidden_size = 256,
+                gae_lambda = 0.95
+            ),
+            TrainerParams(
+                batch_transitions_by_env_trajectory = True, # Must be enabled for PPO
+                num_epochs = 1000,
+                batches_per_epoch = 1,
+                batch_size = 64,
+                updates_per_batch = 1,
+                shuffle_batches = False, # False to not interfere with GAE creation
+                record_video_frequency=1,
+                save_location = "./saved_models/AntPPO"
+            ),
+            EnvParams(
+                env_name = "brax-ant",
+                env_normalization=False,
+                num_envs = self.num_envs,
+                max_episode_steps = self.max_episode_steps,
+                vector_env=False, # Brax will init 'n' environments on its side
+                misc_arguments = {
+                    "batch_size": self.num_envs, # Brax's convention uses batch_size for num_environments
+                    "episode_length": self.max_episode_steps,
+                    "healthy_reward": 0.50, # 1.00,
+                    "ctrl_cost_weight": 0.25, # .5,
+                    "contact_cost_weight": 2.5e-4, # 5e-4,
+                    # "use_contact_forces": True,
+                    "terminate_when_unhealthy": True
+                }
+            )
+        )
+
+
+class PPO2BraxHopperConfig(Config):
+    def __init__(self):
+        self.max_episode_steps = 1024
+        self.num_envs = 1024
+
+        super().__init__(
+            PPO2Params(
+                tau = 0.1,
+                clip = 0.25,
+                gamma = 0.99,
+                policy_learning_rate = 5e-4,
+                value_learning_rate = 5e-4,
+                entropy_coefficient = 0.05,
+                hidden_size = 512,
+                gae_lambda = 0.95
+            ),
+            TrainerParams(
+                batch_transitions_by_env_trajectory = True, # Must be enabled for PPO
+                num_epochs = 1000,
+                batches_per_epoch = 1,
+                batch_size = 128,
+                updates_per_batch = 1,
+                shuffle_batches = False, # False to not interfere with GAE creation
+                record_video_frequency=1,
+                save_location = "./saved_models/AntPPO"
+            ),
+            EnvParams(
+                env_name = "brax-hopper",
+                env_normalization=False,
+                num_envs = self.num_envs,
+                max_episode_steps = self.max_episode_steps,
+                vector_env=False, # Brax will init 'n' environments on its side
+                misc_arguments = {
+                    "batch_size": self.num_envs, # Brax's convention uses batch_size for num_environments
+                    "episode_length": self.max_episode_steps
                 }
             )
         )

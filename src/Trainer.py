@@ -41,13 +41,14 @@ class Trainer:
         self.state : torch.Tensor
         self.device = device
 
+        self.action_min = float(self.env.action_space.low_repr) # type: ignore
+        self.action_max = float(self.env.action_space.high_repr) # type: ignore
+
         self.reset()
         self.learning_rate_schedulers = {}
-        if train_params.learningRateScheduler:
-            for network_name, optimizer in self.agent.optimizers.items():
-                class_ = getattr(importlib.import_module("torch.optim.lr_scheduler"), train_params.learningRateSchedulerClass)
-                learning_rate_scheduler: lr_scheduler.LRScheduler = class_(optimizer, **train_params.learningRateScheduleArgs)
-                self.learning_rate_schedulers[network_name] = learning_rate_scheduler
+        for name, optimizer in self.agent.optimizers.items():
+            if "scheduler" in name:
+                self.learning_rate_schedulers[name] = optimizer
 
 
     def reduce_dicts_to_avg(self, list_of_dicts: List[Dict[str, torch.Tensor]]) -> Dict[str, torch.Tensor]:
@@ -82,10 +83,6 @@ class Trainer:
                 np.random.shuffle(batch)
             train_results.append(self.agent.learn(batch, self.env_params.num_envs, self.train_params.batch_size))
 
-        if self.train_params.learningRateScheduler:
-            for _, scheduler in self.learning_rate_schedulers.items():
-                scheduler.step()
-
         if self.train_params.on_policy_training:
             self.exp_buffer.empty()
         
@@ -95,10 +92,9 @@ class Trainer:
         for metric, value in train_results.items():
             self.writer.add_scalar(tag=metric, scalar_value=value, global_step=self.current_update)
 
-        if self.train_params.learningRateScheduler:
-            for name, scheduler in self.learning_rate_schedulers.items():
-                [value] = scheduler.get_last_lr()
-                self.writer.add_scalar(tag=name + " learning rate scheduler", scalar_value=value, global_step=self.current_update)
+        for name, scheduler in self.learning_rate_schedulers.items():
+            [value] = scheduler.get_last_lr()
+            self.writer.add_scalar(tag=name + " learning rate scheduler", scalar_value=value, global_step=self.current_update)
 
     def save_model(self)->None:
         self.agent.save(self.save_location)
@@ -122,9 +118,9 @@ class Trainer:
             if self.state.__class__ == np.ndarray:
                 self.state = to_tensor(self.state, device=self.device)
             action, other = self.agent.get_actions(self.state)
-            other = other.cpu()
+            other = other.cpu().detach()
             action = action.cpu().squeeze(-1) if self.train_params.squeeze_actions else action.cpu()
-            next_state, reward, done, _, _ = self.env.step(action)
+            next_state, reward, done, _, _ = self.env.step(torch.clamp(action, min=self.action_min, max=self.action_max))
 
             # Convert to tensor if not
             if next_state.__class__ == np.ndarray:

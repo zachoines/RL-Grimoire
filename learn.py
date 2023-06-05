@@ -28,11 +28,24 @@ gym.register(
     entry_point="src.brax_to_gymnasium:convert_brax_to_gym",
     kwargs={
         "name": "ant",
-        "episode_length": 1,
+        "episode_length": 1024,
         "healthy_reward": 1.0,
         "ctrl_cost_weight": 0.5,
         "contact_cost_weight": 1e-4,
         "use_contact_forces": True,
+        "terminate_when_unhealthy": True
+    }
+)
+
+gym.register(
+    id="brax-hopper",
+    entry_point="src.brax_to_gymnasium:convert_brax_to_gym",
+    kwargs={
+        "name": "hopper",
+        "episode_length": 1024,
+        "forward_reward_weight": 1.0,
+        "ctrl_cost_weight": 1e-3,
+        "healthy_reward": 1.0,
         "terminate_when_unhealthy": True
     }
 )
@@ -60,7 +73,7 @@ if __name__ == "__main__":
             id = config.env_params.env_name, 
             num_envs=config.env_params.num_envs,
             wrappers=[
-                lambda env, env_id=i: RecordVideoWrapper(env, recording_length=512, enabled=(env_id==0)) for i in range(config.env_params.num_envs)
+                lambda env, env_id=i: RecordVideoWrapper(env, recording_length=128, enabled=(env_id==0)) for i in range(config.env_params.num_envs)
             ],
             **config.env_params.misc_arguments
         )
@@ -74,7 +87,7 @@ if __name__ == "__main__":
     if config.env_params.env_normalization:
         state, _ = env.reset()
         with torch.no_grad():
-            for _ in range(256):
+            for _ in range(512):
                 action = env.unwrapped.action_space.sample()
                 next_state, _, _, _, _ = env.step(action)
                 running_mean_std_recorder.update(next_state)
@@ -99,5 +112,5 @@ if __name__ == "__main__":
     env.close()
 
     # Test the policy
-    env = gym.Env = gym.make(config.env_params.env_name)
-    test_policy(env, agent, normalizor=running_mean_std_recorder if config.env_params.env_normalization else None)
+    # env = gym.Env = gym.make(config.env_params.env_name)
+    # test_policy(env, agent, normalizor=running_mean_std_recorder if config.env_params.env_normalization else None)

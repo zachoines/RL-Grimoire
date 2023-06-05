@@ -1,6 +1,7 @@
 import torch
 from torch import nn
 from torch.nn import functional as F
+from Networks import ResidualBlock, ResidualBlockLarge
 
 class DiscreteGradientPolicy(nn.Module):
     def __init__(self, in_features : int, out_features : int, hidden_size : int, device : torch.device = torch.device("cpu")):
@@ -21,6 +22,75 @@ class DiscreteGradientPolicy(nn.Module):
         x = torch.softmax(self.fc3(x), dim=-1)
         return x
 
+class GaussianGradientPolicyV3(nn.Module):
+    def __init__(self, 
+        in_features : int, 
+        out_features : int, 
+        hidden_size : int,
+        device : torch.device = torch.device("cpu")):
+        super().__init__()
+
+        # Shared Network
+        self.shared_net = nn.Sequential(
+            nn.Linear(in_features, hidden_size),
+            nn.BatchNorm1d(hidden_size),
+            nn.LeakyReLU(),
+            ResidualBlockLarge(hidden_size),
+            ResidualBlockLarge(hidden_size),
+        )
+        self.mean = nn.Linear(hidden_size, out_features)
+        self.std = nn.Linear(hidden_size, out_features)
+
+        self.apply(self.init_weights)  # Xavier initialization
+        self.eps = 1e-8
+        self.device = device
+        self.to(self.device)
+
+    def init_weights(self, m):
+        if type(m) == nn.Linear:
+            nn.init.xavier_normal_(m.weight)
+            m.bias.data.fill_(0.01)
+
+    def forward(self, state):
+        shared_features = self.shared_net(state)
+        means = torch.tanh(self.mean(shared_features)) 
+        stds = F.softplus(self.std(shared_features)) + self.eps
+        return means, stds
+    
+class GaussianGradientPolicyV4(nn.Module):
+    def __init__(self, 
+        in_features : int, 
+        out_features : int, 
+        hidden_size : int,
+        device : torch.device = torch.device("cpu")):
+        super().__init__()
+
+        # Shared Network
+        self.shared_net = nn.Sequential(
+            nn.Linear(in_features, hidden_size),
+            nn.BatchNorm1d(hidden_size),
+            nn.LeakyReLU(),
+            ResidualBlock(hidden_size)
+        )
+        self.mean = nn.Linear(hidden_size, out_features)
+        self.std = nn.Linear(hidden_size, out_features)
+
+        self.apply(self.init_weights)  # Xavier initialization
+        self.eps = 1e-8
+        self.device = device
+        self.to(self.device)
+
+    def init_weights(self, m):
+        if type(m) == nn.Linear:
+            nn.init.xavier_normal_(m.weight)
+            m.bias.data.fill_(0.01)
+
+    def forward(self, state):
+        shared_features = self.shared_net(state)
+        means = torch.tanh(self.mean(shared_features)) 
+        stds = F.softplus(self.std(shared_features)) + self.eps
+        return means, stds
+
 class GaussianGradientPolicyV2(nn.Module):
     def __init__(self, 
         in_features : int, 
@@ -30,36 +100,34 @@ class GaussianGradientPolicyV2(nn.Module):
         super().__init__()
 
         # Shared Network
-        hidden_space1 = int(hidden_size / 2)
-        hidden_space2 = hidden_size
         self.shared_net = nn.Sequential(
-            nn.Linear(in_features, hidden_space1),
-            nn.LeakyReLU(),
-            nn.Linear(hidden_space1, hidden_space2),
-            nn.LeakyReLU(),
+            nn.Linear(in_features, hidden_size),
+            nn.ReLU(),
+            nn.Linear(hidden_size, hidden_size // 2),
+            nn.ReLU(),
         )
+        self.mean = nn.Linear(hidden_size // 2, out_features)
+        self.std = nn.Linear(hidden_size // 2, out_features)
 
-        # Policy Mean
-        self.mean = nn.Sequential(
-            nn.Linear(hidden_space2, out_features),
-            nn.Tanh()
-        )
-
-        # Policy Std Dev
-        self.std = nn.Sequential(
-            nn.Linear(hidden_space2, out_features),
-            nn.Softplus()
-        )
-
-        self.eps = 0.0001
+        self.apply(self.init_weights)  # Xavier initialization
+        self.eps = 1e-8
+        self.std_min = 0.1
+        self.std_max = 2.0
         self.device = device
         self.to(self.device)
 
+    def init_weights(self, m):
+        if type(m) == nn.Linear:
+            nn.init.xavier_normal_(m.weight)
+            m.bias.data.fill_(0.01)
+
     def forward(self, state):
         shared_features = self.shared_net(state)
-        means = self.mean(shared_features)
-        stds = self.std(shared_features) + self.eps
+        means = torch.tanh(self.mean(shared_features)) 
+        stds = F.softplus(self.std(shared_features)) + self.eps
+        stds = torch.clamp(stds, min=self.std_min, max=self.std_max)
         return means, stds
+
 
 class GaussianGradientPolicy(nn.Module):
     def __init__(self, 

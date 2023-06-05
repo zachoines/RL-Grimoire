@@ -124,7 +124,7 @@ class VectorGymWrapper(gym.vector.VectorEnv):
     self._recording_save_frequeny = recording_save_frequeny
     self._steps = 0
     self._episode = 0
-    self._recording = False
+    self._recording = True
     self._image_buffer = []
     self._session_video = cv2.VideoWriter(
         os.path.join(self._record_location, self._record_name_prefix) + '_' + str(self._episode) + '.mp4' ,
