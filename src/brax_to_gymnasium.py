@@ -32,7 +32,7 @@ def convert_brax_to_gym(name: str, **kwargs):
         record = True, 
         record_location = 'videos/',
         record_name_prefix = f"{name}_{current_date_string}",
-        recording_save_frequeny = 512
+        recording_save_frequeny = 128
     )
     env = JaxToTorchWrapper(env, device)
     return env
@@ -128,7 +128,7 @@ class VectorGymWrapper(gym.vector.VectorEnv):
     self._image_buffer = []
     self._session_video = cv2.VideoWriter(
         os.path.join(self._record_location, self._record_name_prefix) + '_' + str(self._episode) + '.mp4' ,
-        fourcc = cv2.VideoWriter_fourcc(*'avc1'),
+        fourcc = cv2.VideoWriter_fourcc(*'xvid'),
         fps = 20, 
         frameSize = (256, 256)
     )
@@ -186,7 +186,7 @@ class VectorGymWrapper(gym.vector.VectorEnv):
                 self._session_video.release()
                 self._session_video = cv2.VideoWriter(
                     os.path.join(self._record_location, self._record_name_prefix) + '_' + str(self._episode) + '.mp4' ,
-                    fourcc = cv2.VideoWriter_fourcc(*'avc1'), 
+                    fourcc = cv2.VideoWriter_fourcc(*'xvid'), 
                     fps = 20, 
                     frameSize = (256, 256)
                 )

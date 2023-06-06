@@ -32,7 +32,7 @@ class Agent:
         self.action_space = action_space
         self.device = device
         self.eps = 1e-8
-        self.max_grad_norm = .5
+        self.max_grad_norm = 2.0
         self.hyperparams = hyperparams
         self.optimizers = {}
     
@@ -104,6 +104,7 @@ class PPO2(Agent):
 
             # make target network initially the same parameters
             self.target_critic.load_state_dict(self.critic.state_dict())
+            self.max_grad_norm = .50
             
         else:
             raise NotImplementedError
@@ -113,7 +114,7 @@ class PPO2(Agent):
     def get_actions(self, state: torch.Tensor, eval=False)->tuple[Tensor, Tensor]:
         if self.is_continous():
             mean, std = self.actor(state)
-            mean = self.rescaleAction(mean, self.action_min, self.action_max)
+            # mean = self.rescaleAction(mean, self.action_min, self.action_max)
             normal = torch.distributions.Normal(mean, std) 
 
             if eval:
@@ -124,7 +125,7 @@ class PPO2(Agent):
         else:
             raise NotImplementedError
 
-    def learn(self, batch: list[Transition], num_envs: int, batch_size: int, num_rounds: int = 8, mini_batch_size: int = 32) -> dict[str, Tensor]:
+    def learn(self, batch: list[Transition], num_envs: int, batch_size: int, num_rounds: int = 10, mini_batch_size: int = 16) -> dict[str, Tensor]:
         # Reshape batch to gathered lists
         states, actions, next_states, rewards, dones, other = map(torch.stack, zip(*batch))
 

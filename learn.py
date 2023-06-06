@@ -55,9 +55,9 @@ if __name__ == "__main__":
     set_random_seeds()
     args = parser.parse_args()
     device = torch.device(
-        "mps" if torch.has_mps else "cpu" or # MACOS
+        "mps" if torch.has_mps else (# MACOS
         "cuda" if torch.has_cuda else 
-        "cpu"
+        "cpu")
     )
 
     # Load train hyperparams

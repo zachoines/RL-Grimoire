@@ -3,6 +3,22 @@ from gymnasium.utils.save_video import save_video
 import gymnasium as gym
 from datetime import datetime
 
+
+class ActionRepeatWrapper(gym.Wrapper):
+    def __init__(self, env, repeat):
+        super(ActionRepeatWrapper, self).__init__(env)
+        self.repeat = repeat
+
+    def step(self, action):
+        total_reward = 0.0
+        done = False
+        for i in range(self.repeat):
+            obs, reward, done, info = self.env.step(action)
+            total_reward += reward
+            if done:
+                break
+        return obs, total_reward, done, info
+
 class RecordVideoWrapper(gym.Wrapper):
     def __init__(self, env, save_folder="videos", recording_length=100, enabled=True):
         super().__init__(env)

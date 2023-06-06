@@ -174,24 +174,24 @@ class PPO2BraxAntConfig(Config):
 class PPO2BraxHopperConfig(Config):
     def __init__(self):
         self.max_episode_steps = 1024
-        self.num_envs = 1024
+        self.num_envs = 256
 
         super().__init__(
             PPO2Params(
                 tau = 0.1,
-                clip = 0.25,
+                clip = 0.1,
                 gamma = 0.99,
-                policy_learning_rate = 5e-4,
-                value_learning_rate = 5e-4,
-                entropy_coefficient = 0.05,
-                hidden_size = 512,
+                policy_learning_rate = 1e-4,
+                value_learning_rate = 1e-3,
+                entropy_coefficient = 0.2,
+                hidden_size = 256,
                 gae_lambda = 0.95
             ),
             TrainerParams(
                 batch_transitions_by_env_trajectory = True, # Must be enabled for PPO
-                num_epochs = 1000,
+                num_epochs = 2000,
                 batches_per_epoch = 1,
-                batch_size = 128,
+                batch_size = 32,
                 updates_per_batch = 1,
                 shuffle_batches = False, # False to not interfere with GAE creation
                 record_video_frequency=1,

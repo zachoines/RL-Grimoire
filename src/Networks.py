@@ -28,33 +28,71 @@ class ResidualBlock(nn.Module):
     def forward(self, x):
         return x + self.block(x)
 
-class ValueNetworkv3(nn.Module):
+
+class ValueNetwork(nn.Module):
     def __init__(self, in_features : int, hidden_size : int, device : torch.device = torch.device("cpu")):
         super().__init__()
-
+        
         self.value_net = nn.Sequential(
             nn.Linear(in_features, hidden_size),
-            nn.BatchNorm1d(hidden_size),
-            nn.LeakyReLU(),
-            ResidualBlock(hidden_size),
-            nn.Linear(hidden_size, 1)
+            nn.ReLU(),
+            nn.Linear(hidden_size, hidden_size // 2),
+            nn.ReLU(),
+            nn.Linear(hidden_size // 2, 1)
         )
-
-        self.apply(self.init_weights) 
+        
+        # self.apply(self.init_weights) 
         self.device = device
         self.to(self.device)
-    
+
     def init_weights(self, m):
         if type(m) == nn.Linear:
             nn.init.xavier_normal_(m.weight)
             m.bias.data.fill_(0.01)
 
     def forward(self, x):
-        orig_shape = x.shape
-        x = x.view(-1, orig_shape[-1])
         x = self.value_net(x)
-        x = x.view(orig_shape[:-1])
         return x
+
+
+class ValueNetworkV1(nn.Module):
+    def __init__(self, in_features: int, hidden_size: int, device: torch.device = torch.device("cpu")):
+        super().__init__()
+
+        self.hidden_layers = nn.Sequential(
+            nn.Linear(in_features, hidden_size),
+            nn.ReLU(),
+            nn.Linear(hidden_size, hidden_size),
+            nn.ReLU(),
+        )
+
+        self.residual_layers = nn.Sequential(
+            nn.Linear(in_features, hidden_size // 2),
+            nn.ReLU(),
+            nn.Linear(hidden_size // 2, hidden_size // 2),
+            nn.ReLU(),
+        )
+
+        self.output_layer = nn.Linear(hidden_size + (hidden_size // 2), 1)
+
+        self.apply(self.init_weights)
+        self.device = device
+        self.to(self.device)
+
+    def init_weights(self, m):
+        if type(m) == nn.Linear:
+            nn.init.xavier_normal_(m.weight)
+            m.bias.data.fill_(0.01)
+
+    def forward(self, x):
+        hidden_features = self.hidden_layers(x)
+        residual_features = self.residual_layers(x)
+
+        combined_features = torch.cat((hidden_features, residual_features), dim=-1)
+        output = self.output_layer(combined_features)
+
+        return output
+    
 
 
 class ValueNetworkV2(nn.Module):
@@ -89,29 +127,34 @@ class ValueNetworkV2(nn.Module):
         x = self.residual2(x)
         x = self.fc2(x)
         return x.view(batch_size, num_envs, 1)  # Reshape back to original size
+    
 
-
-class ValueNetwork(nn.Module):
+class ValueNetworkv3(nn.Module):
     def __init__(self, in_features : int, hidden_size : int, device : torch.device = torch.device("cpu")):
         super().__init__()
-        
+
         self.value_net = nn.Sequential(
             nn.Linear(in_features, hidden_size),
-            nn.ReLU(),
-            nn.Linear(hidden_size, hidden_size // 2),
-            nn.ReLU(),
-            nn.Linear(hidden_size // 2, 1)
+            nn.BatchNorm1d(hidden_size),
+            nn.LeakyReLU(),
+            ResidualBlock(hidden_size),
+            nn.Linear(hidden_size, 1)
         )
-        
-        # self.apply(self.init_weights) 
+
+        self.apply(self.init_weights) 
         self.device = device
         self.to(self.device)
-
+    
     def init_weights(self, m):
         if type(m) == nn.Linear:
             nn.init.xavier_normal_(m.weight)
             m.bias.data.fill_(0.01)
 
     def forward(self, x):
+        orig_shape = x.shape
+        x = x.view(-1, orig_shape[-1])
         x = self.value_net(x)
+        x = x.view(orig_shape[:-1])
         return x
+
+
