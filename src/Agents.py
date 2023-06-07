@@ -155,8 +155,15 @@ class PPO2(Agent):
             # Non-terminal mask for this timestep
             non_terminal = 1.0 - dones[:, t]
 
+            # Adjust next_values for terminal states
+            next_values_adjusted: torch.Tensor
+            if t == batch_size - 1:
+                next_values_adjusted = dones[:, t] * next_values[:, t] 
+            else:
+                next_values_adjusted = dones[:, t] * next_values[:, t] + (1.0 - dones[:, t]) * next_values[:, t+1]
+
             # Compute the delta for this timestep
-            delta = rewards[:, t] + self.hyperparams.gamma * non_terminal * next_values[:, t] - values[:, t]
+            delta = rewards[:, t] + self.hyperparams.gamma * non_terminal * next_values_adjusted - values[:, t]
 
             # Update advantages with delta and discounted, lambda-scaled future advantage
             advantages = delta + self.hyperparams.gamma * self.hyperparams.gae_lambda * non_terminal * advantages
