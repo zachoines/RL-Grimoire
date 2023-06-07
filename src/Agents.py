@@ -10,6 +10,7 @@ from torch.distributions import Normal
 import torch.nn.functional as F
 import torch.optim.lr_scheduler as lr_scheduler
 from torch.nn.utils.clip_grad import clip_grad_norm_
+from itertools import chain
 
 # Local imports
 from Datasets import Transition
@@ -98,9 +99,9 @@ class PPO2(Agent):
             self.num_actions = self.action_space.shape[-1] # type: ignore
             self.action_min = float(self.action_space.low_repr) # type: ignore
             self.action_max = float(self.action_space.high_repr) # type: ignore
-            self.actor = GaussianGradientPolicyV3(self.state_size, self.num_actions, self.hidden_size, device=device)
-            self.critic = ValueNetworkV1(self.state_size, self.hidden_size, device)
-            self.target_critic = ValueNetworkV1(self.state_size, self.hidden_size, device)
+            self.actor = GaussianGradientPolicyV2(self.state_size, self.num_actions, self.hidden_size, device=device)
+            self.critic = ValueNetwork(self.state_size, self.hidden_size, device)
+            self.target_critic = ValueNetwork(self.state_size, self.hidden_size, device)
 
             # make target network initially the same parameters
             self.target_critic.load_state_dict(self.critic.state_dict())
@@ -125,7 +126,7 @@ class PPO2(Agent):
         else:
             raise NotImplementedError
 
-    def learn(self, batch: list[Transition], num_envs: int, batch_size: int, num_rounds: int = 5, mini_batch_size: int = 32) -> dict[str, Tensor]:
+    def learn(self, batch: list[Transition], num_envs: int, batch_size: int, num_rounds: int = 4, mini_batch_size: int = 32, clipped_value_loss_eps=0.2) -> dict[str, Tensor]:
         # Reshape batch to gathered lists
         states, actions, next_states, rewards, dones, other = map(torch.stack, zip(*batch))
 
@@ -140,12 +141,13 @@ class PPO2(Agent):
         # Compute values for states and next states
         with torch.no_grad():
             values = self.critic(states.view(-1, states.size(-1)))
-            next_values = self.critic(next_states.view(-1, next_states.size(-1))) 
-            # self.target_critic(next_states.view(-1, next_states.size(-1)))
+            next_values = self.critic(next_states.view(-1, next_states.size(-1)))
+            old_values = self.target_critic(states.view(-1, states.size(-1)))
 
         # Reshape back to original dimensions for G_t and deltas computation
         values = values.view(num_envs, batch_size, -1)
         next_values = next_values.view(num_envs, batch_size, -1)
+        old_values = old_values.view(num_envs, batch_size, -1)
 
         # Calculate advantages with gae
         advantages_all = torch.zeros_like(values)
@@ -158,7 +160,7 @@ class PPO2(Agent):
             # Adjust next_values for terminal states
             next_values_adjusted: torch.Tensor
             if t == batch_size - 1:
-                next_values_adjusted = dones[:, t] * next_values[:, t] 
+                next_values_adjusted = dones[:, t] * next_values[:, t]
             else:
                 next_values_adjusted = dones[:, t] * next_values[:, t] + (1.0 - dones[:, t]) * next_values[:, t+1]
 
@@ -171,16 +173,17 @@ class PPO2(Agent):
             # Store this timestep's advantages
             advantages_all[:, t] = advantages
 
-      
         # Flatten states, actions, log probabilities, advantages, and targets
         states = states.view(-1, states.size(-1))
         actions = actions.view(-1, actions.size(-1))
+        values = values.view(-1)
+        old_values = old_values.view(-1, 1)
         prev_log_probs = prev_log_probs.view(-1)
         advantages_all = advantages_all.view(-1)
         
         # Normalize advantages and calculate targets (while shifting their mean towards actual returns)
         advantages_all = ((advantages_all - advantages_all.mean()) / (advantages_all.std() + 1e-8)).view(-1).detach()
-        targets = (advantages_all + values.view(-1)).detach() # normally its: targets = G_t.view(-1)
+        targets = (advantages_all + values).detach()
 
         # Initialize loss and entropy accumulators
         total_loss_actor, total_loss_critic, total_entropy = 0, 0, 0
@@ -196,6 +199,7 @@ class PPO2(Agent):
                 ids = rand_ids[start_idx:start_idx + mini_batch_size]
 
                 # Extract mini-batch data
+                mb_old_values = old_values[ids]
                 mb_states = states[ids]
                 mb_actions = actions[ids]
                 mb_old_log_probs = prev_log_probs[ids].detach()
@@ -217,34 +221,39 @@ class PPO2(Agent):
                     torch.clamp(ratio, 1.0 - self.hyperparams.clip, 1.0 + self.hyperparams.clip) * mb_advantages
                 ).mean() - self.hyperparams.entropy_coefficient * entropy
 
-                # Compute the value loss
-                loss_value = F.smooth_l1_loss(self.critic(mb_states), mb_targets)
+                # Compute the value loss with clipping
+                predicted_values = self.critic(mb_states)
+                clipped_values = mb_old_values + (predicted_values - mb_old_values).clamp(-clipped_value_loss_eps, clipped_value_loss_eps)
+                loss_value1 = F.mse_loss(predicted_values, mb_targets)
+                loss_value2 = F.mse_loss(clipped_values, mb_targets)
+                loss_value = torch.max(loss_value1, loss_value2)
 
-                # Backpropagate and update actor parameters
-                self.optimizers['actor'].zero_grad() # type: ignore
-                loss_policy.backward()
+                # Combine the losses
+                total_loss = self.hyperparams.policy_loss_weight * loss_policy + self.hyperparams.value_loss_weight * loss_value
+
+                # Clear the gradients
+                self.optimizer.zero_grad()
+
+                # Backpropagate the total loss
+                total_loss.backward()
+
+                # Clip the gradients
                 clip_grad_norm_(self.actor.parameters(), self.max_grad_norm)
-                self.optimizers['actor'].step()
-                
-                # Backpropagate and update critic parameters
-                self.optimizers['critic'].zero_grad() # type: ignore
-                loss_value.backward()
                 clip_grad_norm_(self.critic.parameters(), self.max_grad_norm)
-                self.optimizers['critic'].step()
+
+                # Perform a single optimization step
+                self.scheduler.step()
+                self.optimizer.step()
 
                 # Accumulate losses and entropy
                 total_loss_actor += loss_policy.item()
                 total_loss_critic += loss_value.item()
                 total_entropy += entropy.item()
 
-                # Step learning rate schedulers
-                self.optimizers['critic_scheduler'].step()
-                self.optimizers['actor_scheduler'].step()
 
-                # Update target network
-                # for param, target_param in zip(self.critic.parameters(), self.target_critic.parameters()):
-                #     target_param.data.copy_(self.hyperparams.tau * param.data + (1 - self.hyperparams.tau) * target_param.data)
-
+        # After each episode or certain number of steps, update the target critic
+        for target_param, param in zip(self.target_critic.parameters(), self.critic.parameters()):
+            target_param.data.copy_(self.hyperparams.tau * param.data + (1.0 - self.hyperparams.tau) * target_param.data)
 
         # Compute average losses and entropy
         total_loss_actor /= (num_rounds * states.size(0) / mini_batch_size)
@@ -267,19 +276,10 @@ class PPO2(Agent):
         )
 
     def get_optimizers(self) -> Dict[str, Optimizer | lr_scheduler.LRScheduler]:
-        actor_optimizer = AdamW(self.actor.parameters(), lr=self.hyperparams.policy_learning_rate)
-        critic_optimizer = AdamW(self.critic.parameters(), lr=self.hyperparams.value_learning_rate)
-        actor_scheduler = torch.optim.lr_scheduler.LambdaLR(
-            actor_optimizer, 
-            lr_lambda=self.create_lr_lambda(
-                1.0,  # Maximum multiplicative factor
-                1.0 / 10.0,  # Minimum multiplicative factor
-                10000,
-                1000000
-            )
-        )
-        critic_scheduler = torch.optim.lr_scheduler.LambdaLR(
-            critic_optimizer, 
+        self.optimizer = AdamW(chain(self.actor.parameters(), self.critic.parameters()), lr=self.hyperparams.policy_learning_rate)
+
+        self.scheduler = torch.optim.lr_scheduler.LambdaLR(
+            self.optimizer, 
             lr_lambda=self.create_lr_lambda(
                 1.0,  # Maximum multiplicative factor
                 1.0 / 10.0,  # Minimum multiplicative factor
@@ -289,10 +289,8 @@ class PPO2(Agent):
         )
 
         return {
-            "actor": AdamW(self.actor.parameters(), lr=self.hyperparams.policy_learning_rate),
-            "critic": AdamW(self.critic.parameters(), lr=self.hyperparams.value_learning_rate),
-            "actor_scheduler": actor_scheduler,
-            "critic_scheduler": critic_scheduler
+            "combined": self.optimizer,
+            "combined_scheduler": self.scheduler
         }
     
     def state_dict(self)-> Dict[str,Dict]:
