@@ -82,8 +82,8 @@ class GaussianGradientPolicyV2(nn.Module):
 
         self.apply(self.init_weights)  # Xavier initialization
         self.eps = 1e-8
-        self.std_min = 0.1
-        self.std_max = 2.0
+        self.std_min = 0.2
+        self.std_max = 20.0
         self.device = device
         self.to(self.device)
 

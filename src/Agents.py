@@ -14,8 +14,8 @@ from torch.nn.utils.clip_grad import clip_grad_norm_
 # Local imports
 from Datasets import Transition
 from Configurations import *
-from Policies import DiscreteGradientPolicy, GaussianGradientPolicy, GaussianGradientPolicyV2
-from Networks import ValueNetwork
+from Policies import *
+from Networks import *
 from Utilities import to_tensor
 
 class Agent:
@@ -32,7 +32,7 @@ class Agent:
         self.action_space = action_space
         self.device = device
         self.eps = 1e-8
-        self.max_grad_norm = 2.0
+        self.max_grad_norm = 1.0
         self.hyperparams = hyperparams
         self.optimizers = {}
     
@@ -98,9 +98,9 @@ class PPO2(Agent):
             self.num_actions = self.action_space.shape[-1] # type: ignore
             self.action_min = float(self.action_space.low_repr) # type: ignore
             self.action_max = float(self.action_space.high_repr) # type: ignore
-            self.actor = GaussianGradientPolicyV2(self.state_size, self.num_actions, self.hidden_size, device=device)
-            self.critic = ValueNetwork(self.state_size, self.hidden_size, device)
-            self.target_critic = ValueNetwork(self.state_size, self.hidden_size, device)
+            self.actor = GaussianGradientPolicyV3(self.state_size, self.num_actions, self.hidden_size, device=device)
+            self.critic = ValueNetworkV1(self.state_size, self.hidden_size, device)
+            self.target_critic = ValueNetworkV1(self.state_size, self.hidden_size, device)
 
             # make target network initially the same parameters
             self.target_critic.load_state_dict(self.critic.state_dict())
@@ -125,7 +125,7 @@ class PPO2(Agent):
         else:
             raise NotImplementedError
 
-    def learn(self, batch: list[Transition], num_envs: int, batch_size: int, num_rounds: int = 10, mini_batch_size: int = 16) -> dict[str, Tensor]:
+    def learn(self, batch: list[Transition], num_envs: int, batch_size: int, num_rounds: int = 8, mini_batch_size: int = 32) -> dict[str, Tensor]:
         # Reshape batch to gathered lists
         states, actions, next_states, rewards, dones, other = map(torch.stack, zip(*batch))
 
@@ -267,8 +267,8 @@ class PPO2(Agent):
             lr_lambda=self.create_lr_lambda(
                 1.0,  # Maximum multiplicative factor
                 1.0 / 10.0,  # Minimum multiplicative factor
-                100000,
-                2000000
+                10000,
+                1000000
             )
         )
         critic_scheduler = torch.optim.lr_scheduler.LambdaLR(
@@ -276,8 +276,8 @@ class PPO2(Agent):
             lr_lambda=self.create_lr_lambda(
                 1.0,  # Maximum multiplicative factor
                 1.0 / 10.0,  # Minimum multiplicative factor
-                100000,
-                2000000
+                10000,
+                1000000
             )
         )
 

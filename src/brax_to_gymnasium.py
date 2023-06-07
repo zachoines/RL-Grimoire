@@ -32,7 +32,7 @@ def convert_brax_to_gym(name: str, **kwargs):
         record = True, 
         record_location = 'videos/',
         record_name_prefix = f"{name}_{current_date_string}",
-        recording_save_frequeny = 128
+        recording_save_frequeny = 512
     )
     env = JaxToTorchWrapper(env, device)
     return env
@@ -254,7 +254,7 @@ class JaxToTorchWrapper(gym.Wrapper):
   def truncation(self, truncs)-> torch.Tensor:
     return b_torch.jax_to_torch(truncs, device=self.device)
 
-  def reset(self) -> tuple[torch.Tensor, dict]:
+  def reset(self, **kwargs) -> tuple[torch.Tensor, dict]:
     obs, info = self.env.reset()
     return self.observation(obs), info
 

@@ -12,7 +12,7 @@ sys.path.append(src_path)
 from src.TrainPresets import *
 from src.TrainPresets import Config
 from src.Trainer import Trainer
-from src.Utilities import set_random_seeds, RunningMeanStd, test_policy
+from src.Utilities import set_random_seeds, RunningMeanStd
 from src.wrappers import RecordVideoWrapper
 
 import torch
@@ -33,7 +33,9 @@ gym.register(
         "ctrl_cost_weight": 0.5,
         "contact_cost_weight": 1e-4,
         "use_contact_forces": True,
-        "terminate_when_unhealthy": True
+        "terminate_when_unhealthy": True,
+        "exclude_current_positions_from_observation": True,
+        "action_repeat": 1
     }
 )
 
@@ -46,7 +48,11 @@ gym.register(
         "forward_reward_weight": 1.0,
         "ctrl_cost_weight": 1e-3,
         "healthy_reward": 1.0,
-        "terminate_when_unhealthy": True
+        "terminate_when_unhealthy": True,
+        "reset_noise_scale": 5e-3,
+        "exclude_current_positions_from_observation": True,
+        "action_repeat": 1,
+        "healthy_z_range": (.7, float('inf'))
     }
 )
 
