@@ -215,24 +215,26 @@ class PPO2BraxHopperConfig(Config):
 
 class PPO2BraxHalfCheetahConfig(Config):
     def __init__(self):
-        self.max_episode_steps = 1024
-        self.num_envs = 512
+        self.max_episode_steps = 256
+        self.num_envs = 128
 
         super().__init__(
             PPO2Params(
                 tau = 0.005,
                 clip = 0.2,
                 gamma = 0.99,
-                policy_learning_rate = 2e-4,
-                entropy_coefficient = 0.01,
+                policy_learning_rate = 1e-3,
+                entropy_coefficient = 0.001,
                 hidden_size = 512,
-                gae_lambda = 0.95
+                gae_lambda = 0.95,
+                log_std_max=2,
+                log_std_min=-20
             ),
             TrainerParams(
                 batch_transitions_by_env_trajectory = True, # Must be enabled for PPO
                 num_epochs = 2000,
                 batches_per_epoch = 1,
-                batch_size = 1024,
+                batch_size = 64,
                 updates_per_batch = 1,
                 shuffle_batches = False, # False to not interfere with GAE creation
                 record_video_frequency=1,
@@ -240,7 +242,7 @@ class PPO2BraxHalfCheetahConfig(Config):
             ),
             EnvParams(
                 env_name = "brax-half-cheetah",
-                env_normalization=False,
+                env_normalization=True,
                 num_envs = self.num_envs,
                 max_episode_steps = self.max_episode_steps,
                 vector_env=False, # Brax will init 'n' environments on its side

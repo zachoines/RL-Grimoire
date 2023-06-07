@@ -27,46 +27,8 @@ class GaussianGradientPolicy(nn.Module):
         in_features : int, 
         out_features : int, 
         hidden_size : int,
-        device : torch.device = torch.device("cpu")):
-        super().__init__()
-
-        # Shared Network
-        hidden_space1 = int(hidden_size / 2)
-        hidden_space2 = hidden_size
-        self.shared_net = nn.Sequential(
-            nn.Linear(in_features, hidden_space1),
-            nn.Tanh(),
-            nn.Linear(hidden_space1, hidden_space2),
-            nn.Tanh(),
-        )
-
-        # Policy Mean
-        self.mean = nn.Sequential(
-            nn.Linear(hidden_space2, out_features)
-        )
-
-        # Policy Std Dev
-        self.std = nn.Sequential(
-            nn.Linear(hidden_space2, out_features)
-        )
-
-        self.eps = 1e-6
-        self.device = device
-        self.to(self.device)
-
-    def forward(self, state):
-        shared_features = self.shared_net(state)
-        means = self.mean(shared_features)
-        stds = torch.log(
-            1 + torch.exp(self.std(shared_features))
-        )
-        return means, stds    
-
-class GaussianGradientPolicyV2(nn.Module):
-    def __init__(self, 
-        in_features : int, 
-        out_features : int, 
-        hidden_size : int,
+        log_std_min: float = -20,
+        log_std_max: float = 2,
         device : torch.device = torch.device("cpu")):
         super().__init__()
 
@@ -78,12 +40,12 @@ class GaussianGradientPolicyV2(nn.Module):
             nn.ReLU(),
         )
         self.mean = nn.Linear(hidden_size // 2, out_features)
-        self.std = nn.Linear(hidden_size // 2, out_features)
+        self.log_std = nn.Linear(hidden_size // 2, out_features)
 
         self.apply(self.init_weights)  # Xavier initialization
         self.eps = 1e-8
-        self.std_min = 0.2
-        self.std_max = 20.0
+        self.log_std_min = log_std_min
+        self.log_std_max = log_std_max
         self.device = device
         self.to(self.device)
 
@@ -95,10 +57,10 @@ class GaussianGradientPolicyV2(nn.Module):
     def forward(self, state):
         shared_features = self.shared_net(state.to(self.device))
         means = torch.tanh(self.mean(shared_features)) 
-        stds = F.softplus(self.std(shared_features)) + self.eps
-        stds = torch.clamp(stds, min=self.std_min, max=self.std_max)
+        stds = torch.exp(
+            self.log_std_min + 0.5 * (self.log_std_max - self.log_std_min) * (torch.tanh(self.log_std(shared_features)) + 1.0)
+        )
         return means, stds
-
 
 
 class GaussianGradientPolicyV3(nn.Module):

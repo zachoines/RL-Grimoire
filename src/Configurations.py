@@ -100,11 +100,11 @@ class PPOParams(A2CParams):
 
 
 class PPO2Params(PPOParams):
-    def __init__(self, gae_lambda: float = 0.9, min_std=0.1, max_std=2.0, policy_loss_weight = 1.0, value_loss_weight = 0.5, *args, **kwargs):
+    def __init__(self, gae_lambda: float = 0.9, log_std_min=-20.0, log_std_max=2.0, policy_loss_weight = 1.0, value_loss_weight = 0.5, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.gae_lambda = gae_lambda
-        self.min_std=min_std
-        self.max_std = max_std
+        self.log_std_min = log_std_min
+        self.log_std_max = log_std_max
         self.policy_loss_weight = policy_loss_weight
         self.value_loss_weight = value_loss_weight
         self.agent_name = "PPO2"

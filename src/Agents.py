@@ -99,7 +99,14 @@ class PPO2(Agent):
             self.num_actions = self.action_space.shape[-1] # type: ignore
             self.action_min = float(self.action_space.low_repr) # type: ignore
             self.action_max = float(self.action_space.high_repr) # type: ignore
-            self.actor = GaussianGradientPolicyV2(self.state_size, self.num_actions, self.hidden_size, device=device)
+            self.actor = GaussianGradientPolicy(
+                self.state_size, 
+                self.num_actions, 
+                self.hidden_size, 
+                log_std_min=self.hyperparams.log_std_min,
+                log_std_max=self.hyperparams.log_std_max,
+                device=device
+            )
             self.critic = ValueNetwork(self.state_size, self.hidden_size, device)
             self.target_critic = ValueNetwork(self.state_size, self.hidden_size, device)
 
@@ -126,7 +133,8 @@ class PPO2(Agent):
         else:
             raise NotImplementedError
 
-    def learn(self, batch: list[Transition], num_envs: int, batch_size: int, num_rounds: int = 4, mini_batch_size: int = 32, clipped_value_loss_eps=0.2) -> dict[str, Tensor]:
+
+    def learn(self, batch: list[Transition], num_envs: int, batch_size: int, num_rounds: int = 4, mini_batch_size: int = 16, clipped_value_loss_eps=0.2) -> dict[str, Tensor]:
         # Reshape batch to gathered lists
         states, actions, next_states, rewards, dones, other = map(torch.stack, zip(*batch))
 
@@ -326,7 +334,7 @@ class PPO(Agent):
             self.num_actions = self.action_space.shape[-1] # type: ignore
             self.action_min = float(self.action_space.low_repr) # type: ignore
             self.action_max = float(self.action_space.high_repr) # type: ignore
-            self.actor = GaussianGradientPolicyV2(self.state_size, self.num_actions, self.hidden_size, device=device)
+            self.actor = GaussianGradientPolicy(self.state_size, self.num_actions, self.hidden_size, device=device)
             self.critic = ValueNetwork(self.state_size, self.hidden_size, device)
             self.target_critic = ValueNetwork(self.state_size, self.hidden_size, device)
 
@@ -458,7 +466,7 @@ class A2C(Agent):
             self.num_actions = self.action_space.shape[-1] # type: ignore
             self.action_min = float(self.action_space.low_repr) # type: ignore
             self.action_max = float(self.action_space.high_repr) # type: ignore
-            self.actor = GaussianGradientPolicyV2(self.state_size, self.num_actions, self.hidden_size, device=device)
+            self.actor = GaussianGradientPolicy(self.state_size, self.num_actions, self.hidden_size, device=device)
             self.critic = ValueNetwork(self.state_size, self.hidden_size, device)
             self.target_critic = ValueNetwork(self.state_size, self.hidden_size, device)
 
