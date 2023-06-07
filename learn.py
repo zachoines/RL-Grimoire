@@ -56,6 +56,23 @@ gym.register(
     }
 )
 
+gym.register(
+    id="brax-humanoid",
+    entry_point="src.brax_to_gymnasium:convert_brax_to_gym",
+    kwargs={
+        "name": "humanoid",
+        "episode_length": 1024,
+        "ctrl_cost_weight": 0.1,
+        "forward_reward_weight": 1.25,
+        "healthy_reward": 5.0,
+        "terminate_when_unhealthy": True,
+        "reset_noise_scale": 1e-2,
+        "exclude_current_positions_from_observation": True,
+        "action_repeat": 1,
+        
+    }
+)
+
 if __name__ == "__main__":
     # Misc setup
     set_random_seeds()

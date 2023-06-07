@@ -211,3 +211,45 @@ class PPO2BraxHopperConfig(Config):
                 }
             )
         )
+
+
+class PPO2BraxAntConfig2(Config):
+    def __init__(self):
+        self.max_episode_steps = 1024
+        self.num_envs = 1024
+
+        super().__init__(
+            PPO2Params(
+                tau = 0.1,
+                clip = 0.3,
+                gamma = 0.97,
+                policy_learning_rate = 3e-4,
+                value_learning_rate = 3e-4,
+                entropy_coefficient = 1e-2,
+                hidden_size = 128,
+                gae_lambda = 0.95
+            ),
+            TrainerParams(
+                batch_transitions_by_env_trajectory = True, # Must be enabled for PPO
+                num_epochs = 2000,
+                batches_per_epoch = 1,
+                batch_size = 1024,
+                updates_per_batch = 1,
+                shuffle_batches = False, # False to not interfere with GAE creation
+                record_video_frequency=1,
+                save_location = "./saved_models/AntPPO"
+            ),
+            EnvParams(
+                env_name = "brax-ant",
+                env_normalization=False,
+                num_envs = self.num_envs,
+                max_episode_steps = self.max_episode_steps,
+                vector_env=False, # Brax will init 'n' environments on its side
+                misc_arguments = {
+                    "batch_size": self.num_envs, # Brax's convention uses batch_size for num_environments
+                    "episode_length": self.max_episode_steps,
+                    "action_repeat": 1,
+                    "exclude_current_positions_from_observation": False
+                }
+            )
+        )
