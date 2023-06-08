@@ -102,22 +102,34 @@ class PPO2(Agent):
             self.actor = GaussianGradientPolicy(
                 self.state_size, 
                 self.num_actions, 
-                128, # self.hidden_size, 
+                self.hidden_size // 2, 
                 log_std_min=self.hyperparams.log_std_min,
                 log_std_max=self.hyperparams.log_std_max,
                 device=device
             )
-            self.critic = ValueNetwork(self.state_size, self.hidden_size, device)
-            self.target_critic = ValueNetwork(self.state_size, self.hidden_size, device)
+            self.critic = ValueNetworkResidual(
+                self.state_size, 
+                self.hidden_size, 
+                device
+            )
+            self.target_critic = ValueNetworkResidual(
+                self.state_size, 
+                self.hidden_size, 
+                device
+            )
 
             # make target network initially the same parameters
             self.target_critic.load_state_dict(self.critic.state_dict())
-            self.max_grad_norm = .50
+            self.max_grad_norm = 2.0
             
         else:
             raise NotImplementedError
         
         self.optimizers = self.get_optimizers()
+
+        # Initialize running mean and variance for reward normalization
+        self.running_mean_reward = 0
+        self.running_var_reward = 1
         
     def get_actions(self, state: torch.Tensor, eval=False)->tuple[Tensor, Tensor]:
         if self.is_continous():
@@ -132,9 +144,9 @@ class PPO2(Agent):
                 return action_sample, normal.log_prob(action_sample).sum(dim=-1)
         else:
             raise NotImplementedError
+        
 
-
-    def learn(self, batch: list[Transition], num_envs: int, batch_size: int, num_rounds: int = 8, mini_batch_size: int = 16, clipped_value_loss_eps=0.2) -> dict[str, Tensor]:
+    def learn(self, batch: list[Transition], num_envs: int, batch_size: int, num_rounds: int = 4, mini_batch_size: int = 16, clipped_value_loss_eps=0.1) -> dict[str, Tensor]:
         # Reshape batch to gathered lists
         states, actions, next_states, rewards, dones, other = map(torch.stack, zip(*batch))
 
@@ -142,10 +154,18 @@ class PPO2(Agent):
         states = states.to(device=self.device, dtype=torch.float32).view((num_envs, batch_size, -1))
         actions = actions.to(device=self.device, dtype=torch.float32).view((num_envs, batch_size, -1))
         next_states = next_states.to(device=self.device, dtype=torch.float32).view((num_envs, batch_size, -1))
-        rewards = rewards.to(device=self.device, dtype=torch.float32).view((num_envs, batch_size, -1))
-        # rewards = (rewards - rewards.mean()) / (rewards.std() + 1e-8)
         dones = dones.to(device=self.device, dtype=torch.float32).view((num_envs, batch_size, -1))
-        prev_log_probs = other.to(device=self.device, dtype=torch.float32).view((num_envs, batch_size)).detach()
+        prev_log_probs = other.to(device=self.device, dtype=torch.float32).view((num_envs, batch_size))
+        
+        # Update running mean and variance and normalize rewards
+        if self.hyperparams.use_moving_average_reward:
+            self.running_mean_reward = self.hyperparams.reward_ema_coefficient * self.running_mean_reward + (1.0 - self.hyperparams.reward_ema_coefficient) * rewards.mean()
+            self.running_var_reward = self.hyperparams.reward_ema_coefficient * self.running_var_reward + (1.0 - self.hyperparams.reward_ema_coefficient) * ((rewards - self.running_mean_reward) ** 2).mean()
+            rewards = (rewards - self.running_mean_reward) / (torch.sqrt(self.running_var_reward) + self.eps)
+        else:
+            rewards = (rewards - rewards.mean()) / (rewards.std() + self.eps)
+
+        rewards = rewards.to(device=self.device, dtype=torch.float32).view((num_envs, batch_size, -1))
 
         # Compute values for states and next states
         with torch.no_grad():
@@ -188,14 +208,14 @@ class PPO2(Agent):
         values = values.view(-1)
         old_values = old_values.view(-1, 1)
         prev_log_probs = prev_log_probs.view(-1)
-        advantages_all = advantages_all.view(-1).detach()
+        advantages_all = advantages_all.view(-1)
         
         # Normalize advantages and calculate targets (while shifting their mean towards actual returns)
-        advantages_all = ((advantages_all - advantages_all.mean()) / (advantages_all.std() + 1e-8)).view(-1).detach()
-        targets = (advantages_all + values).detach()
+        advantages_all = ((advantages_all - advantages_all.mean()) / (advantages_all.std() + self.eps)).view(-1)
+        targets = (advantages_all + values)
 
         # Initialize loss and entropy accumulators
-        total_loss_actor, total_loss_critic, total_entropy = 0, 0, 0
+        total_loss_combined, total_loss_actor, total_loss_critic, total_entropy = 0, 0, 0, 0
 
         # Perform multiple rounds of learning
         for _ in range(num_rounds):
@@ -208,12 +228,13 @@ class PPO2(Agent):
                 ids = rand_ids[start_idx:start_idx + mini_batch_size]
 
                 # Extract mini-batch data
-                mb_old_values = old_values[ids]
-                mb_states = states[ids]
-                mb_actions = actions[ids]
-                mb_old_log_probs = prev_log_probs[ids].detach()
-                mb_advantages = advantages_all[ids].detach()
-                mb_targets = torch.unsqueeze(targets[ids], dim=-1).detach()
+                with torch.no_grad():
+                    mb_old_values = old_values[ids]
+                    mb_states = states[ids]
+                    mb_actions = actions[ids]
+                    mb_old_log_probs = prev_log_probs[ids]
+                    mb_advantages = advantages_all[ids]
+                    mb_targets = torch.unsqueeze(targets[ids], dim=-1)
 
                 # Compute policy distribution parameters
                 loc, scale = self.actor(mb_states)
@@ -257,6 +278,7 @@ class PPO2(Agent):
                 # Accumulate losses and entropy
                 total_loss_actor += loss_policy.item()
                 total_loss_critic += loss_value.item()
+                total_loss_combined += total_loss.item()
                 total_entropy += entropy.item()
 
 
@@ -272,6 +294,7 @@ class PPO2(Agent):
         return {
             "Actor loss": to_tensor(total_loss_actor),
             "Critic loss": to_tensor(total_loss_critic),
+            "total loss": to_tensor(total_loss_combined),
             "Entropy": to_tensor(total_entropy),
             "Train Rewards": rewards.mean()
         }

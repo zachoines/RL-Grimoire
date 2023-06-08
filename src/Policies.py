@@ -53,17 +53,17 @@ class GaussianGradientPolicy(nn.Module):
             nn.Linear(hidden_size // 2, out_features),
         )
 
-        self.apply(self.init_weights)  # Using He initialization
+        self.apply(self.init_weights) 
         self.eps = 1e-8
         self.log_std_min = log_std_min
         self.log_std_max = log_std_max
-        self.min_std_value = min_std_value  # New attribute
+        self.min_std_value = min_std_value
         self.device = device
         self.to(self.device)
 
     def init_weights(self, m):
         if type(m) == nn.Linear:
-            nn.init.kaiming_normal_(m.weight)  # Changed from Xavier to He initialization
+            nn.init.kaiming_normal_(m.weight)
             m.bias.data.fill_(0.01)
 
     def forward(self, state):
@@ -181,7 +181,7 @@ class GaussianGradientPolicyV5(nn.Module):
         self.mean = nn.Linear(hidden_size, out_features)
         self.std = nn.Linear(hidden_size, out_features)
 
-        self.apply(self.init_weights)  # Xavier initialization
+        self.apply(self.init_weights)
         self.eps = 1e-8
         self.device = device
         self.to(self.device)

@@ -257,24 +257,25 @@ class PPO2BraxHalfCheetahConfig(Config):
 class PPO2InvertedDoublePendulumConfig(Config):
     def __init__(self):
         self.max_episode_steps = 512
-        self.num_envs = 24
+        self.num_envs = 12
         super().__init__(
             PPO2Params(
-                tau = 0.005,
-                clip = 0.2,
-                gamma = 0.99,
+                tau = 0.001,
+                clip = 0.1,
+                gamma = 0.95,
                 policy_learning_rate = 2e-4,
-                entropy_coefficient = 0.01,
+                entropy_coefficient = 0.005,
                 hidden_size = 256,
                 gae_lambda = 0.95,
                 log_std_max=2,
-                log_std_min=-20
+                log_std_min=-20,
+                reward_ema_coefficient = 0.9
             ),
             TrainerParams(
                 batch_transitions_by_env_trajectory = True, # Must be enabled for PPO
                 num_epochs = 2000,
                 batches_per_epoch = 1,
-                batch_size = 32,
+                batch_size = 128,
                 updates_per_batch = 1,
                 shuffle_batches = False, # False to not interfere with GAE creation
                 record_video_frequency=1,

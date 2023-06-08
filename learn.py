@@ -133,8 +133,8 @@ if __name__ == "__main__":
             ],
             **config.env_params.misc_arguments
         )
-    env = NormalizeReward(env)
-    env = NormalizeObservation(env)
+    # env = NormalizeReward(env)
+    # env = NormalizeObservation(env)
 
     # Load agent
     agent_class_ = getattr(importlib.import_module("src.Agents"), config.agent_params.agent_name)
