@@ -41,7 +41,7 @@ class ValueNetwork(nn.Module):
             nn.Linear(hidden_size, 1)
         )
         
-        # self.apply(self.init_weights) 
+        self.apply(self.init_weights) 
         self.device = device
         self.to(self.device)
 
