@@ -36,9 +36,9 @@ class ValueNetwork(nn.Module):
         self.value_net = nn.Sequential(
             nn.Linear(in_features, hidden_size),
             nn.ReLU(),
-            nn.Linear(hidden_size, hidden_size // 2),
+            nn.Linear(hidden_size, hidden_size),
             nn.ReLU(),
-            nn.Linear(hidden_size // 2, 1)
+            nn.Linear(hidden_size, 1)
         )
         
         # self.apply(self.init_weights) 

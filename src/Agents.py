@@ -102,7 +102,7 @@ class PPO2(Agent):
             self.actor = GaussianGradientPolicy(
                 self.state_size, 
                 self.num_actions, 
-                self.hidden_size, 
+                256, # self.hidden_size, 
                 log_std_min=self.hyperparams.log_std_min,
                 log_std_max=self.hyperparams.log_std_max,
                 device=device
@@ -134,7 +134,7 @@ class PPO2(Agent):
             raise NotImplementedError
 
 
-    def learn(self, batch: list[Transition], num_envs: int, batch_size: int, num_rounds: int = 4, mini_batch_size: int = 16, clipped_value_loss_eps=0.2) -> dict[str, Tensor]:
+    def learn(self, batch: list[Transition], num_envs: int, batch_size: int, num_rounds: int = 8, mini_batch_size: int = 16, clipped_value_loss_eps=0.2) -> dict[str, Tensor]:
         # Reshape batch to gathered lists
         states, actions, next_states, rewards, dones, other = map(torch.stack, zip(*batch))
 
@@ -143,6 +143,7 @@ class PPO2(Agent):
         actions = actions.to(device=self.device, dtype=torch.float32).view((num_envs, batch_size, -1))
         next_states = next_states.to(device=self.device, dtype=torch.float32).view((num_envs, batch_size, -1))
         rewards = rewards.to(device=self.device, dtype=torch.float32).view((num_envs, batch_size, -1))
+        rewards = (rewards - rewards.mean()) / (rewards.std() + 1e-8)
         dones = dones.to(device=self.device, dtype=torch.float32).view((num_envs, batch_size, -1))
         prev_log_probs = other.to(device=self.device, dtype=torch.float32).view((num_envs, batch_size)).detach()
 
@@ -187,7 +188,7 @@ class PPO2(Agent):
         values = values.view(-1)
         old_values = old_values.view(-1, 1)
         prev_log_probs = prev_log_probs.view(-1)
-        advantages_all = advantages_all.view(-1)
+        advantages_all = advantages_all.view(-1).detach()
         
         # Normalize advantages and calculate targets (while shifting their mean towards actual returns)
         advantages_all = ((advantages_all - advantages_all.mean()) / (advantages_all.std() + 1e-8)).view(-1).detach()
@@ -250,7 +251,7 @@ class PPO2(Agent):
                 clip_grad_norm_(self.critic.parameters(), self.max_grad_norm)
 
                 # Perform a single optimization step
-                self.scheduler.step()
+                # self.scheduler.step()
                 self.optimizer.step()
 
                 # Accumulate losses and entropy

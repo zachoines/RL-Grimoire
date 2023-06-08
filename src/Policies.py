@@ -29,39 +29,54 @@ class GaussianGradientPolicy(nn.Module):
         hidden_size : int,
         log_std_min: float = -20,
         log_std_max: float = 2,
+        min_std_value: float = 1e-3,  # New parameter
         device : torch.device = torch.device("cpu")):
         super().__init__()
 
         # Shared Network
         self.shared_net = nn.Sequential(
             nn.Linear(in_features, hidden_size),
-            nn.ReLU(),
-            nn.Linear(hidden_size, hidden_size // 2),
-            nn.ReLU(),
+            nn.LeakyReLU(),  # Changed from ReLU to LeakyReLU
+            nn.Dropout(p=0.2),  # Added Dropout
+            nn.Linear(hidden_size, hidden_size),
+            nn.LeakyReLU(),  # Changed from ReLU to LeakyReLU
+            nn.Dropout(p=0.2),  # Added Dropout
         )
-        self.mean = nn.Linear(hidden_size // 2, out_features)
-        self.log_std = nn.Linear(hidden_size // 2, out_features)
 
-        self.apply(self.init_weights)  # Xavier initialization
+        self.mean = nn.Sequential(
+            nn.Linear(hidden_size, hidden_size // 2),
+            nn.LeakyReLU(),  # Changed from ReLU to LeakyReLU
+            nn.Dropout(p=0.2),  # Added Dropout
+            nn.Linear(hidden_size // 2, out_features),
+        )
+
+        self.log_std = nn.Sequential(
+            nn.Linear(hidden_size, hidden_size // 2),
+            nn.LeakyReLU(),  # Changed from ReLU to LeakyReLU
+            nn.Dropout(p=0.2),  # Added Dropout
+            nn.Linear(hidden_size // 2, out_features),
+        )
+
+        self.apply(self.init_weights)  # Using He initialization
         self.eps = 1e-8
         self.log_std_min = log_std_min
         self.log_std_max = log_std_max
+        self.min_std_value = min_std_value  # New attribute
         self.device = device
         self.to(self.device)
 
     def init_weights(self, m):
         if type(m) == nn.Linear:
-            nn.init.xavier_normal_(m.weight)
+            nn.init.kaiming_normal_(m.weight)  # Changed from Xavier to He initialization
             m.bias.data.fill_(0.01)
 
     def forward(self, state):
         shared_features = self.shared_net(state.to(self.device))
         means = torch.tanh(self.mean(shared_features)) 
-        stds = torch.exp(
-            self.log_std_min + 0.5 * (self.log_std_max - self.log_std_min) * (torch.tanh(self.log_std(shared_features)) + 1.0)
-        )
+        log_stds = self.log_std_min + 0.5 * (self.log_std_max - self.log_std_min) * (torch.tanh(self.log_std(shared_features)) + 1.0)
+        stds = torch.exp(log_stds)
+        # stds = torch.clamp(stds, min=self.min_std_value)  # Clamping std values
         return means, stds
-
 
 class GaussianGradientPolicyV3(nn.Module):
     def __init__(self, 

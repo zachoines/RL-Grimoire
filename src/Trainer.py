@@ -121,7 +121,7 @@ class Trainer:
             other = other.cpu().detach()
             action = action.cpu().squeeze(-1) if self.train_params.squeeze_actions else action.cpu()
             next_state, reward, done, _, _ = self.env.step(torch.clamp(action, min=self.action_min, max=self.action_max))
-
+        
             # Convert to tensor if not
             if next_state.__class__ == np.ndarray:
                 next_state = to_tensor(next_state, device=self.device)
