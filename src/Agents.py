@@ -102,7 +102,7 @@ class PPO2(Agent):
             self.actor = GaussianGradientPolicy(
                 self.state_size, 
                 self.num_actions, 
-                self.hidden_size // 2, 
+                self.hidden_size // 4, 
                 log_std_min=self.hyperparams.log_std_min,
                 log_std_max=self.hyperparams.log_std_max,
                 device=device
@@ -120,7 +120,7 @@ class PPO2(Agent):
 
             # make target network initially the same parameters
             self.target_critic.load_state_dict(self.critic.state_dict())
-            self.max_grad_norm = 2.0
+            self.max_grad_norm = 1.0
             
         else:
             raise NotImplementedError
@@ -146,7 +146,7 @@ class PPO2(Agent):
             raise NotImplementedError
         
 
-    def learn(self, batch: list[Transition], num_envs: int, batch_size: int, num_rounds: int = 4, mini_batch_size: int = 16, clipped_value_loss_eps=0.1) -> dict[str, Tensor]:
+    def learn(self, batch: list[Transition], num_envs: int, batch_size: int, num_rounds: int = 8, mini_batch_size: int = 32, clipped_value_loss_eps=0.2) -> dict[str, Tensor]:
         # Reshape batch to gathered lists
         states, actions, next_states, rewards, dones, other = map(torch.stack, zip(*batch))
 
@@ -261,19 +261,18 @@ class PPO2(Agent):
                 # Combine the losses
                 total_loss = self.hyperparams.policy_loss_weight * loss_policy + self.hyperparams.value_loss_weight * loss_value
 
-                # Clear the gradients
-                self.optimizer.zero_grad()
-
                 # Backpropagate the total loss
                 total_loss.backward()
 
                 # Clip the gradients
-                clip_grad_norm_(self.actor.parameters(), self.max_grad_norm)
-                clip_grad_norm_(self.critic.parameters(), self.max_grad_norm)
+                clip_grad_norm_(self.optimizer.param_groups[0]['params'], self.max_grad_norm)
 
                 # Perform a single optimization step
                 # self.scheduler.step()
                 self.optimizer.step()
+
+                # Clear the gradients
+                self.optimizer.zero_grad()
 
                 # Accumulate losses and entropy
                 total_loss_actor += loss_policy.item()
@@ -290,7 +289,7 @@ class PPO2(Agent):
         total_loss_actor /= (num_rounds * states.size(0) / mini_batch_size)
         total_loss_critic /= (num_rounds * states.size(0) / mini_batch_size)
         total_entropy /= (num_rounds * states.size(0) / mini_batch_size)
-
+        total_loss_combined /= (num_rounds * states.size(0) / mini_batch_size)
         return {
             "Actor loss": to_tensor(total_loss_actor),
             "Critic loss": to_tensor(total_loss_critic),
