@@ -263,7 +263,7 @@ class PPO2InvertedDoublePendulumConfig(Config):
                 tau = 0.1,
                 clip = 0.2,
                 gamma = 0.9,
-                policy_learning_rate = 1e-4,
+                policy_learning_rate = 2e-4,
                 entropy_coefficient = 0.01,
                 hidden_size = 256,
                 gae_lambda = 0.95,

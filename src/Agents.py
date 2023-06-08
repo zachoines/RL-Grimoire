@@ -120,7 +120,7 @@ class PPO2(Agent):
 
             # make target network initially the same parameters
             self.target_critic.load_state_dict(self.critic.state_dict())
-            self.max_grad_norm = 1.0
+            self.max_grad_norm = .5
             
         else:
             raise NotImplementedError
