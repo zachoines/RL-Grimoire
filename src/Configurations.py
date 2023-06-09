@@ -53,7 +53,7 @@ class TrainerParams(object):
             shuffle_batches: bool = False, # Shuffle batches AFTER sampling
             render: bool = False, # Render the environment (may not be possible in vector environments)
             save_location: str = "", # Location of save file
-            squeeze_actions: bool = False, # Remove empty dimension for actions. For example, needed when using only one env copy.
+            preprocess_action = lambda x: x,
             save_model_frequency: int = 1 # Save model after so meny epochs
         ):
 
@@ -80,7 +80,7 @@ class TrainerParams(object):
         # Misc
         self.render = render
         self.save_location = save_location
-        self.squeeze_actions = squeeze_actions
+        self.preprocess_action = preprocess_action
         self.save_model_frequency = save_model_frequency
 
 class REINFORCEParams(AgentParams):

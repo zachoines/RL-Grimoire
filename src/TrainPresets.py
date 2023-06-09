@@ -1,4 +1,6 @@
 from Configurations import *
+import torch
+from typing import Annotated
 
 class REINFORCECartpoleConfig(Config):
     def __init__(self):
@@ -254,13 +256,13 @@ class PPO2BraxHalfCheetahConfig(Config):
 class PPO2InvertedDoublePendulumConfig(Config):
     def __init__(self):
         self.max_episode_steps = 512
-        self.num_envs = 1
+        self.num_envs = 3
         super().__init__(
             PPO2Params(
                 tau = 0.005,
                 clip = 0.2,
                 gamma = 0.99,
-                policy_learning_rate = 2e-4,
+                policy_learning_rate = 4e-4,
                 entropy_coefficient = 0.01,
                 hidden_size = 256,
                 gae_lambda = 0.95,
@@ -284,6 +286,50 @@ class PPO2InvertedDoublePendulumConfig(Config):
             ),
             EnvParams(
                 env_name = "InvertedDoublePendulum-v4",
+                env_normalization=False,
+                num_envs = self.num_envs,
+                max_episode_steps = self.max_episode_steps,
+                vector_env=True,
+                misc_arguments = {
+                    "max_episode_steps": self.max_episode_steps,
+                    "render_mode": "rgb_array"
+                }
+            )
+        )
+
+class PPO2SwimmerConfig(Config):
+    def __init__(self):
+        self.max_episode_steps = 512
+        self.num_envs = 2
+        super().__init__(
+            PPO2Params(
+                clip = 0.2,
+                gamma = 0.99,
+                policy_learning_rate = 2e-4,
+                entropy_coefficient = 0.01,
+                hidden_size = 256,
+                gae_lambda = 0.95,
+                log_std_max=2,
+                log_std_min=-20,
+                reward_ema_coefficient = 0.99,
+                clipped_value_loss_eps = 0.2,
+                policy_loss_weight = 1.0,
+                value_loss_weight = 0.5,
+                max_grad_norm = .5
+            ),
+            TrainerParams(
+                batch_transitions_by_env_trajectory = True, # Must be enabled for PPO
+                num_epochs = 2000,
+                batches_per_epoch = 1,
+                batch_size = 1024,
+                updates_per_batch = 1,
+                shuffle_batches = False, # False to not interfere with GAE creation
+                save_model_frequency=20,
+                save_location = "./saved_models/SwimmerPPO2",
+                preprocess_action = lambda x: x.view((self.num_envs,2)).to(dtype=torch.float32).numpy()
+            ),
+            EnvParams(
+                env_name = "Swimmer-v4",
                 env_normalization=False,
                 num_envs = self.num_envs,
                 max_episode_steps = self.max_episode_steps,

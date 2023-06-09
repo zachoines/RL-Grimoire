@@ -230,6 +230,7 @@ class PPO2(Agent):
             
             # Process each mini-batch
             for start_idx in mini_batch_start_indices:
+                
                 # Mini-batch indices
                 end_idx = min(start_idx + mini_batch_size, states.size(0))
                 ids = slice(start_idx, end_idx)  # using a slice instead of a list of indices
@@ -287,12 +288,8 @@ class PPO2(Agent):
                 total_loss_combined += total_loss.item()
                 total_entropy += entropy.item()
 
-
-        # After each episode or certain number of steps, update the target critic
-        # for target_param, param in zip(self.target_critic.parameters(), self.critic.parameters()):
-        #     target_param.data.copy_(self.hyperparams.tau * param.data + (1.0 - self.hyperparams.tau) * target_param.data)
-
-
+        
+        # Copy over new parameters
         self.old_critic.load_state_dict(self.critic.state_dict())
 
         # Compute average losses and entropy
@@ -303,9 +300,10 @@ class PPO2(Agent):
         return {
             "Actor loss": to_tensor(total_loss_actor),
             "Critic loss": to_tensor(total_loss_critic),
-            "total loss": to_tensor(total_loss_combined),
+            "Total loss": to_tensor(total_loss_combined),
             "Entropy": to_tensor(total_entropy),
-            "Train Rewards": rewards.mean()
+            "Train Rewards": rewards.mean(),
+            "Total Batch Rewards": rewards.sum()
         }
 
     def create_lr_lambda(self, initial_lr: float, final_lr: float, constant_steps: int, max_steps: int):
@@ -327,7 +325,7 @@ class PPO2(Agent):
             self.optimizer, 
             lr_lambda=self.create_lr_lambda(
                 1.0,  # Maximum multiplicative factor
-                1.0 / 10.0,  # Minimum multiplicative factor
+                1.0 / 20.0,  # Minimum multiplicative factor
                 5000,
                 100000
             )

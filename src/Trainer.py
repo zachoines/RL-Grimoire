@@ -118,8 +118,9 @@ class Trainer:
             if self.state.__class__ == np.ndarray:
                 self.state = to_tensor(self.state, device=self.device)
             action, other = self.agent.get_actions(self.state)
-            other = other.cpu().detach()
-            action = action.cpu().squeeze(-1) if self.train_params.squeeze_actions else action.cpu()
+            other = other.cpu()
+            action = action.cpu()
+            action = self.train_params.preprocess_action(action)
             # torch.clamp(action, min=self.action_min, max=self.action_max)
             next_state, reward, done, _, _ = self.env.step(action)
         
