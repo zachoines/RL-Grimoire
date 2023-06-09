@@ -102,17 +102,17 @@ class PPO2(Agent):
             self.actor = GaussianGradientPolicy(
                 self.state_size, 
                 self.num_actions, 
-                self.hidden_size // 4, 
+                self.hidden_size // 2, 
                 log_std_min=self.hyperparams.log_std_min,
                 log_std_max=self.hyperparams.log_std_max,
                 device=device
             )
-            self.critic = ValueNetworkResidual(
+            self.critic = ValueNetwork(
                 self.state_size, 
                 self.hidden_size, 
                 device
             )
-            self.target_critic = ValueNetworkResidual(
+            self.target_critic = ValueNetwork(
                 self.state_size, 
                 self.hidden_size, 
                 device
@@ -120,7 +120,6 @@ class PPO2(Agent):
 
             # make target network initially the same parameters
             self.target_critic.load_state_dict(self.critic.state_dict())
-            self.max_grad_norm = .5
             
         else:
             raise NotImplementedError
@@ -146,7 +145,7 @@ class PPO2(Agent):
             raise NotImplementedError
         
 
-    def learn(self, batch: list[Transition], num_envs: int, batch_size: int, num_rounds: int = 8, mini_batch_size: int = 32, clipped_value_loss_eps=0.2) -> dict[str, Tensor]:
+    def learn(self, batch: list[Transition], num_envs: int, batch_size: int, num_rounds: int = 4, mini_batch_size: int = 32) -> dict[str, Tensor]:
         # Reshape batch to gathered lists
         states, actions, next_states, rewards, dones, other = map(torch.stack, zip(*batch))
 
@@ -211,7 +210,7 @@ class PPO2(Agent):
         advantages_all = advantages_all.view(-1)
         
         # Normalize advantages and calculate targets (while shifting their mean towards actual returns)
-        advantages_all = ((advantages_all - advantages_all.mean()) / (advantages_all.std() + self.eps)).view(-1)
+        # advantages_all = ((advantages_all - advantages_all.mean()) / (advantages_all.std() + self.eps)).view(-1)
         targets = (advantages_all + values)
 
         # Initialize loss and entropy accumulators
@@ -253,7 +252,7 @@ class PPO2(Agent):
 
                 # Compute the value loss with clipping
                 predicted_values = self.critic(mb_states)
-                clipped_values = mb_old_values + (predicted_values - mb_old_values).clamp(-clipped_value_loss_eps, clipped_value_loss_eps)
+                clipped_values = mb_old_values + (predicted_values - mb_old_values).clamp(-self.hyperparams.clipped_value_loss_eps, self.hyperparams.clipped_value_loss_eps)
                 loss_value1 = F.mse_loss(predicted_values, mb_targets)
                 loss_value2 = F.mse_loss(clipped_values, mb_targets)
                 loss_value = torch.max(loss_value1, loss_value2)
@@ -265,11 +264,11 @@ class PPO2(Agent):
                 total_loss.backward()
 
                 # Clip the gradients
-                clip_grad_norm_(self.optimizer.param_groups[0]['params'], self.max_grad_norm)
+                clip_grad_norm_(self.optimizer.param_groups[0]['params'], self.hyperparams.max_grad_norm)
 
                 # Perform a single optimization step
-                # self.scheduler.step()
                 self.optimizer.step()
+                # self.scheduler.step()
 
                 # Clear the gradients
                 self.optimizer.zero_grad()
@@ -307,15 +306,19 @@ class PPO2(Agent):
         )
 
     def get_optimizers(self) -> Dict[str, Optimizer | lr_scheduler.LRScheduler]:
-        self.optimizer = AdamW(chain(self.actor.parameters(), self.critic.parameters()), lr=self.hyperparams.policy_learning_rate)
+        self.optimizer = AdamW(
+            chain(self.actor.parameters(), self.critic.parameters()), 
+            lr=self.hyperparams.policy_learning_rate,
+            weight_decay=1e-4
+        )
 
         self.scheduler = torch.optim.lr_scheduler.LambdaLR(
             self.optimizer, 
             lr_lambda=self.create_lr_lambda(
                 1.0,  # Maximum multiplicative factor
                 1.0 / 10.0,  # Minimum multiplicative factor
-                10000,
-                1000000
+                5000,
+                100000
             )
         )
 

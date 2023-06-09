@@ -262,23 +262,25 @@ class PPO2InvertedDoublePendulumConfig(Config):
             PPO2Params(
                 tau = 0.1,
                 clip = 0.2,
-                gamma = 0.9,
-                policy_learning_rate = 2e-4,
+                gamma = 0.99,
+                policy_learning_rate = 1e-4,
                 entropy_coefficient = 0.01,
                 hidden_size = 256,
                 gae_lambda = 0.95,
                 log_std_max=2,
                 log_std_min=-20,
-                reward_ema_coefficient = 0.95
+                reward_ema_coefficient = 0.99,
+                clipped_value_loss_eps = 0.1,
+                max_grad_norm = .5
             ),
             TrainerParams(
                 batch_transitions_by_env_trajectory = True, # Must be enabled for PPO
                 num_epochs = 2000,
                 batches_per_epoch = 1,
-                batch_size = 512,
+                batch_size = 32,
                 updates_per_batch = 1,
                 shuffle_batches = False, # False to not interfere with GAE creation
-                record_video_frequency=1,
+                record_video_frequency=20,
                 save_location = "./saved_models/InvertedDoublePendulumPPO2"
             ),
             EnvParams(

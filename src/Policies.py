@@ -36,19 +36,23 @@ class GaussianGradientPolicy(nn.Module):
         # Shared Network
         self.shared_net = nn.Sequential(
             nn.Linear(in_features, hidden_size),
+            nn.BatchNorm1d(hidden_size),  # Added BatchNorm layer
             nn.LeakyReLU(),
             nn.Linear(hidden_size, hidden_size),
+            nn.BatchNorm1d(hidden_size),  # Added BatchNorm layer
             nn.LeakyReLU(),
         )
 
         self.mean = nn.Sequential(
             nn.Linear(hidden_size, hidden_size // 2),
+            nn.BatchNorm1d(hidden_size // 2),  # Added BatchNorm layer
             nn.LeakyReLU(),
             nn.Linear(hidden_size // 2, out_features),
         )
 
         self.log_std = nn.Sequential(
             nn.Linear(hidden_size, hidden_size // 2),
+            nn.BatchNorm1d(hidden_size // 2),  # Added BatchNorm layer
             nn.LeakyReLU(),
             nn.Linear(hidden_size // 2, out_features),
         )
@@ -69,11 +73,11 @@ class GaussianGradientPolicy(nn.Module):
     def forward(self, state):
         shared_features = self.shared_net(state.to(self.device))
         means = torch.tanh(self.mean(shared_features)) 
-        # log_stds = self.log_std_min + 0.5 * (self.log_std_max - self.log_std_min) * (torch.tanh(self.log_std(shared_features)) + 1.0)
-        # stds = torch.exp(log_stds)
-        # stds = torch.clamp(stds, min=self.min_std_value)  # Clamping std values
+        log_stds = self.log_std_min + 0.5 * (self.log_std_max - self.log_std_min) * (torch.tanh(self.log_std(shared_features)) + 1.0)
+        stds = torch.exp(log_stds)
+        stds = torch.clamp(stds, min=self.min_std_value)  # Clamping std values
 
-        stds = F.softplus(self.log_std(shared_features)) + .001
+        # stds = F.softplus(self.log_std(shared_features)) + .001
         return means, stds
 
 class GaussianGradientPolicyV3(nn.Module):

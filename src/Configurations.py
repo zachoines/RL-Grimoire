@@ -25,13 +25,15 @@ class AgentParams(object):
             value_learning_rate: float = 1e-3,
             gamma: float = 0.99, 
             entropy_coefficient: float = 1e-2,
-            hidden_size: int = 64
+            hidden_size: int = 64,
+            max_grad_norm: float = 0.5
         ):
         self.policy_learning_rate = policy_learning_rate
         self.value_learning_rate = value_learning_rate
         self.gamma = gamma
         self.entropy_coefficient = entropy_coefficient
         self.hidden_size = hidden_size
+        self.max_grad_norm = max_grad_norm
 
 class TrainerParams(object):
     def __init__(self,
@@ -102,12 +104,13 @@ class PPOParams(A2CParams):
 class PPO2Params(PPOParams):
     def __init__(self, 
                  gae_lambda: float = 0.9, 
-                 log_std_min:float = -20.0, 
-                 log_std_max:float = 2.0, 
-                 policy_loss_weight:float = 1.0, 
-                 value_loss_weight:float = 0.5, 
+                 log_std_min: float = -20.0, 
+                 log_std_max: float = 2.0, 
+                 policy_loss_weight: float = 1.0, 
+                 value_loss_weight: float = 0.5, 
                  use_moving_average_reward: bool = True, 
                  reward_ema_coefficient: float = 0.99,
+                 clipped_value_loss_eps: float = 0.2,
                  *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.gae_lambda = gae_lambda
@@ -117,6 +120,7 @@ class PPO2Params(PPOParams):
         self.value_loss_weight = value_loss_weight
         self.use_moving_average_reward = use_moving_average_reward
         self.reward_ema_coefficient = reward_ema_coefficient
+        self.clipped_value_loss_eps = clipped_value_loss_eps
         self.agent_name = "PPO2"
 
 class Config(object):
