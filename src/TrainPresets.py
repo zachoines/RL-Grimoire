@@ -266,7 +266,7 @@ class PPO2InvertedDoublePendulumConfig(Config):
                 gae_lambda = 0.95,
                 log_std_max=2,
                 log_std_min=-20,
-                reward_ema_coefficient = 0.90,
+                reward_ema_coefficient = 0.99,
                 clipped_value_loss_eps = 0.2,
                 policy_loss_weight = 1.0,
                 value_loss_weight = 0.5,
@@ -276,7 +276,7 @@ class PPO2InvertedDoublePendulumConfig(Config):
                 batch_transitions_by_env_trajectory = True, # Must be enabled for PPO
                 num_epochs = 2000,
                 batches_per_epoch = 1,
-                batch_size = 512,
+                batch_size = 1024,
                 updates_per_batch = 1,
                 shuffle_batches = False, # False to not interfere with GAE creation
                 save_model_frequency=20,
