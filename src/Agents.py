@@ -5,7 +5,7 @@ import numpy as np
 import torch
 from typing import Dict, Union
 from torch import Tensor
-from torch.optim import Optimizer, AdamW
+from torch.optim import Optimizer, AdamW, Adam 
 from torch.distributions import Normal
 import torch.nn.functional as F
 import torch.optim.lr_scheduler as lr_scheduler
@@ -112,14 +112,14 @@ class PPO2(Agent):
                 self.hidden_size, 
                 device
             )
-            self.target_critic = ValueNetwork(
+            self.old_critic = ValueNetwork(
                 self.state_size, 
                 self.hidden_size, 
                 device
             )
 
-            # make target network initially the same parameters
-            self.target_critic.load_state_dict(self.critic.state_dict())
+            # make old critic network initially the same parameters
+            self.old_critic.load_state_dict(self.critic.state_dict())
             
         else:
             raise NotImplementedError
@@ -129,6 +129,9 @@ class PPO2(Agent):
         # Initialize running mean and variance for reward normalization
         self.running_mean_reward = 0
         self.running_var_reward = 1
+        
+        self.update_count = 0
+        self.update_frequency = 10
         
     def get_actions(self, state: torch.Tensor, eval=False)->tuple[Tensor, Tensor]:
         if self.is_continous():
@@ -145,7 +148,9 @@ class PPO2(Agent):
             raise NotImplementedError
         
 
-    def learn(self, batch: list[Transition], num_envs: int, batch_size: int, num_rounds: int = 4, mini_batch_size: int = 32) -> dict[str, Tensor]:
+    def learn(self, batch: list[Transition], num_envs: int, batch_size: int, num_rounds: int = 8, mini_batch_size: int = 64) -> dict[str, Tensor]:
+        self.update_count += 1
+
         # Reshape batch to gathered lists
         states, actions, next_states, rewards, dones, other = map(torch.stack, zip(*batch))
 
@@ -170,7 +175,7 @@ class PPO2(Agent):
         with torch.no_grad():
             values = self.critic(states.view(-1, states.size(-1)))
             next_values = self.critic(next_states.view(-1, next_states.size(-1)))
-            old_values = self.target_critic(states.view(-1, states.size(-1)))
+            old_values = self.old_critic(states.view(-1, states.size(-1)))
 
         # Reshape back to original dimensions for G_t and deltas computation
         values = values.view(num_envs, batch_size, -1)
@@ -210,7 +215,7 @@ class PPO2(Agent):
         advantages_all = advantages_all.view(-1)
         
         # Normalize advantages and calculate targets (while shifting their mean towards actual returns)
-        # advantages_all = ((advantages_all - advantages_all.mean()) / (advantages_all.std() + self.eps)).view(-1)
+        advantages_all = ((advantages_all - advantages_all.mean()) / (advantages_all.std() + self.eps)).view(-1)
         targets = (advantages_all + values)
 
         # Initialize loss and entropy accumulators
@@ -218,13 +223,16 @@ class PPO2(Agent):
 
         # Perform multiple rounds of learning
         for _ in range(num_rounds):
-            # Shuffle data for stochastic gradient descent
-            rand_ids = torch.randperm(states.size(0))
-
+            
+            # Generate a random order of mini-batches
+            mini_batch_start_indices = list(range(0, states.size(0), mini_batch_size))
+            np.random.shuffle(mini_batch_start_indices)
+            
             # Process each mini-batch
-            for start_idx in range(0, states.size(0), mini_batch_size):
+            for start_idx in mini_batch_start_indices:
                 # Mini-batch indices
-                ids = rand_ids[start_idx:start_idx + mini_batch_size]
+                end_idx = min(start_idx + mini_batch_size, states.size(0))
+                ids = slice(start_idx, end_idx)  # using a slice instead of a list of indices
 
                 # Extract mini-batch data
                 with torch.no_grad():
@@ -281,8 +289,11 @@ class PPO2(Agent):
 
 
         # After each episode or certain number of steps, update the target critic
-        for target_param, param in zip(self.target_critic.parameters(), self.critic.parameters()):
-            target_param.data.copy_(self.hyperparams.tau * param.data + (1.0 - self.hyperparams.tau) * target_param.data)
+        # for target_param, param in zip(self.target_critic.parameters(), self.critic.parameters()):
+        #     target_param.data.copy_(self.hyperparams.tau * param.data + (1.0 - self.hyperparams.tau) * target_param.data)
+
+
+        self.old_critic.load_state_dict(self.critic.state_dict())
 
         # Compute average losses and entropy
         total_loss_actor /= (num_rounds * states.size(0) / mini_batch_size)
@@ -375,7 +386,7 @@ class PPO(Agent):
     def get_actions(self, state: torch.Tensor, eval=False)->tuple[Tensor, Tensor]:
         if self.is_continous():
             mean, std = self.actor(state)
-            mean = self.rescaleAction(mean, self.action_min, self.action_max)
+            # mean = self.rescaleAction(mean, self.action_min, self.action_max)
 
             if eval:
                 return mean, torch.concat((mean, std), dim=-1)

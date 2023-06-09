@@ -149,7 +149,6 @@ class PPO2BraxAntConfig(Config):
                 batch_size = 64,
                 updates_per_batch = 1,
                 shuffle_batches = False, # False to not interfere with GAE creation
-                record_video_frequency=1,
                 save_location = "./saved_models/AntPPO"
             ),
             EnvParams(
@@ -194,7 +193,6 @@ class PPO2BraxHopperConfig(Config):
                 batch_size = 128,
                 updates_per_batch = 1,
                 shuffle_batches = False, # False to not interfere with GAE creation
-                record_video_frequency=1,
                 save_location = "./saved_models/AntPPO"
             ),
             EnvParams(
@@ -237,7 +235,6 @@ class PPO2BraxHalfCheetahConfig(Config):
                 batch_size = 64,
                 updates_per_batch = 1,
                 shuffle_batches = False, # False to not interfere with GAE creation
-                record_video_frequency=1,
                 save_location = "./saved_models/HalfCheetahPPO"
             ),
             EnvParams(
@@ -257,30 +254,32 @@ class PPO2BraxHalfCheetahConfig(Config):
 class PPO2InvertedDoublePendulumConfig(Config):
     def __init__(self):
         self.max_episode_steps = 512
-        self.num_envs = 16
+        self.num_envs = 1
         super().__init__(
             PPO2Params(
-                tau = 0.1,
+                tau = 0.005,
                 clip = 0.2,
                 gamma = 0.99,
-                policy_learning_rate = 1e-4,
+                policy_learning_rate = 2e-4,
                 entropy_coefficient = 0.01,
                 hidden_size = 256,
                 gae_lambda = 0.95,
                 log_std_max=2,
                 log_std_min=-20,
-                reward_ema_coefficient = 0.99,
-                clipped_value_loss_eps = 0.1,
+                reward_ema_coefficient = 0.90,
+                clipped_value_loss_eps = 0.2,
+                policy_loss_weight = 1.0,
+                value_loss_weight = 0.5,
                 max_grad_norm = .5
             ),
             TrainerParams(
                 batch_transitions_by_env_trajectory = True, # Must be enabled for PPO
                 num_epochs = 2000,
                 batches_per_epoch = 1,
-                batch_size = 32,
+                batch_size = 512,
                 updates_per_batch = 1,
                 shuffle_batches = False, # False to not interfere with GAE creation
-                record_video_frequency=20,
+                save_model_frequency=20,
                 save_location = "./saved_models/InvertedDoublePendulumPPO2"
             ),
             EnvParams(

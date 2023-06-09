@@ -36,23 +36,23 @@ class GaussianGradientPolicy(nn.Module):
         # Shared Network
         self.shared_net = nn.Sequential(
             nn.Linear(in_features, hidden_size),
-            nn.BatchNorm1d(hidden_size),  # Added BatchNorm layer
+            # nn.BatchNorm1d(hidden_size),  # Added BatchNorm layer
             nn.LeakyReLU(),
-            nn.Linear(hidden_size, hidden_size),
-            nn.BatchNorm1d(hidden_size),  # Added BatchNorm layer
-            nn.LeakyReLU(),
+            # nn.Linear(hidden_size, hidden_size),
+            # nn.BatchNorm1d(hidden_size),  # Added BatchNorm layer
+            # nn.LeakyReLU(),
         )
 
         self.mean = nn.Sequential(
             nn.Linear(hidden_size, hidden_size // 2),
-            nn.BatchNorm1d(hidden_size // 2),  # Added BatchNorm layer
+            # nn.BatchNorm1d(hidden_size // 2),  # Added BatchNorm layer
             nn.LeakyReLU(),
             nn.Linear(hidden_size // 2, out_features),
         )
 
         self.log_std = nn.Sequential(
             nn.Linear(hidden_size, hidden_size // 2),
-            nn.BatchNorm1d(hidden_size // 2),  # Added BatchNorm layer
+            # nn.BatchNorm1d(hidden_size // 2),  # Added BatchNorm layer
             nn.LeakyReLU(),
             nn.Linear(hidden_size // 2, out_features),
         )

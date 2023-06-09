@@ -35,10 +35,10 @@ class ValueNetwork(nn.Module):
         
         self.value_net = nn.Sequential(
             nn.Linear(in_features, hidden_size),
-            nn.BatchNorm1d(hidden_size),   # Batch Normalization layer after first Linear layer
+            # nn.BatchNorm1d(hidden_size),   # Batch Normalization layer after first Linear layer
             nn.LeakyReLU(),
             nn.Linear(hidden_size, hidden_size),
-            nn.BatchNorm1d(hidden_size),   # Batch Normalization layer after second Linear layer
+            # nn.BatchNorm1d(hidden_size),   # Batch Normalization layer after second Linear layer
             nn.LeakyReLU(),
             nn.Linear(hidden_size, 1)
         )

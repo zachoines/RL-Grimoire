@@ -54,7 +54,7 @@ class TrainerParams(object):
             render: bool = False, # Render the environment (may not be possible in vector environments)
             save_location: str = "", # Location of save file
             squeeze_actions: bool = False, # Remove empty dimension for actions. For example, needed when using only one env copy.
-            record_video_frequency: int = 1 # Record video after so meny epochs
+            save_model_frequency: int = 1 # Save model after so meny epochs
         ):
 
         # Schedulers
@@ -81,7 +81,7 @@ class TrainerParams(object):
         self.render = render
         self.save_location = save_location
         self.squeeze_actions = squeeze_actions
-        self.record_video_frequency = record_video_frequency
+        self.save_model_frequency = save_model_frequency
 
 class REINFORCEParams(AgentParams):
     def __init__(self, *args, **kwargs):
