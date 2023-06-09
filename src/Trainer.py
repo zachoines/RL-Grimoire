@@ -125,14 +125,10 @@ class Trainer:
             next_state, reward, done, _, _ = self.env.step(action)
         
             # Convert to tensor if not
-            if next_state.__class__ == np.ndarray:
-                next_state = to_tensor(next_state, device=self.device)
-
-            if reward.__class__ == np.ndarray:
-                reward = to_tensor(reward, device=self.device)
-
-            if done.__class__ == np.ndarray:
-                done = to_tensor(done, device=self.device)
+            action = to_tensor(action, device=self.device)
+            next_state = to_tensor(next_state, device=self.device)
+            reward = to_tensor(reward, device=self.device)
+            done = to_tensor(done, device=self.device)
             
             if self.env_params.env_normalization:
                 next_state = self.normalizer.normalize(next_state)

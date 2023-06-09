@@ -300,7 +300,7 @@ class PPO2InvertedDoublePendulumConfig(Config):
 class PPO2SwimmerConfig(Config):
     def __init__(self):
         self.max_episode_steps = 512
-        self.num_envs = 2
+        self.num_envs = 1
         super().__init__(
             PPO2Params(
                 clip = 0.2,

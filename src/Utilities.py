@@ -5,7 +5,7 @@ import os
 import torch
 import random
 
-from typing import Any
+from typing import Any, Union, List
 
 
 def set_random_seeds(seed=42):
@@ -26,8 +26,16 @@ def test_policy(env, agent, num_episodes=5, max_steps=1024, normalizor = None,):
                 next_state, _, _, _, _ = env.step(action)
                 state = next_state
 
-def to_tensor(x: Any, device = torch.device("cpu"), dtype=torch.float32, requires_grad=True):
-    return torch.tensor(x, device=device, dtype=dtype, requires_grad=requires_grad)
+def to_tensor(x: Union[np.ndarray, torch.Tensor, int, float, List], device=torch.device("cpu"), dtype=torch.float32, requires_grad=True):
+    if isinstance(x, np.ndarray):
+        x = torch.tensor(x, device=device, dtype=dtype, requires_grad=requires_grad)
+    elif isinstance(x, torch.Tensor):
+        x = x.to(device=device, dtype=dtype, requires_grad=requires_grad)
+    elif isinstance(x, (int, float, list)):
+        x = torch.tensor(x, device=device, dtype=dtype, requires_grad=requires_grad)
+    else:
+        raise ValueError("Unsupported data type. Only NumPy arrays, PyTorch tensors, primitives, and lists are supported.")
+    return x
 
 class RunningMeanStd:
 
