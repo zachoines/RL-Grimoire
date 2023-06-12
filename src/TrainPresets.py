@@ -212,47 +212,6 @@ class PPO2BraxHopperConfig(Config):
             )
         )
 
-
-class PPO2BraxHalfCheetahConfig(Config):
-    def __init__(self):
-        self.max_episode_steps = 512
-        self.num_envs = 256
-
-        super().__init__(
-            PPO2Params(
-                tau = 0.005,
-                clip = 0.2,
-                gamma = 0.99,
-                policy_learning_rate = 2e-4,
-                entropy_coefficient = 0.01,
-                hidden_size = 512,
-                gae_lambda = 0.95,
-                log_std_max=2,
-                log_std_min=-20
-            ),
-            TrainerParams(
-                batch_transitions_by_env_trajectory = True, # Must be enabled for PPO
-                num_epochs = 2000,
-                batches_per_epoch = 1,
-                batch_size = 64,
-                updates_per_batch = 1,
-                shuffle_batches = False, # False to not interfere with GAE creation
-                save_location = "./saved_models/HalfCheetahPPO"
-            ),
-            EnvParams(
-                env_name = "brax-half-cheetah",
-                env_normalization=False,
-                num_envs = self.num_envs,
-                max_episode_steps = self.max_episode_steps,
-                vector_env=False, # Brax will init 'n' environments on its side
-                misc_arguments = {
-                    "batch_size": self.num_envs, # Brax's convention uses batch_size for num_environments
-                    "episode_length": self.max_episode_steps,
-                    # "action_repeat": 1,
-                }
-            )
-        )
-
 class PPO2InvertedDoublePendulumConfig(Config):
     def __init__(self):
         self.max_episode_steps = 512
@@ -299,7 +258,7 @@ class PPO2InvertedDoublePendulumConfig(Config):
 
 class PPO2SwimmerConfig(Config):
     def __init__(self):
-        self.max_episode_steps = 512
+        self.max_episode_steps = 256
         self.num_envs = 1
         super().__init__(
             PPO2Params(
@@ -313,9 +272,11 @@ class PPO2SwimmerConfig(Config):
                 log_std_min=-20,
                 reward_ema_coefficient = 0.99,
                 clipped_value_loss_eps = 0.2,
+                max_grad_norm = .5,
+                use_moving_average_reward = False,
+                combined_optimizer = True,
                 policy_loss_weight = 1.0,
-                value_loss_weight = 0.5,
-                max_grad_norm = .5
+                value_loss_weight = .5
             ),
             TrainerParams(
                 batch_transitions_by_env_trajectory = True, # Must be enabled for PPO
@@ -337,6 +298,142 @@ class PPO2SwimmerConfig(Config):
                 misc_arguments = {
                     "max_episode_steps": self.max_episode_steps,
                     "render_mode": "rgb_array"
+                }
+            )
+        )
+
+
+class PPO2HalfCheetahConfig(Config):
+    def __init__(self):
+        self.max_episode_steps = 1024
+        self.num_envs = 2
+        super().__init__(
+            PPO2Params(
+                clip = 0.2,
+                gamma = 0.99,
+                policy_learning_rate = 2e-4,
+                value_learning_rate = 1e-3,
+                entropy_coefficient = 0.1,
+                hidden_size = 256,
+                gae_lambda = 0.95,
+                log_std_max=2,
+                log_std_min=-20,
+                reward_ema_coefficient = 0.99,
+                clipped_value_loss_eps = 0.2,
+                max_grad_norm = 1.0,
+                use_moving_average_reward = True,
+                combined_optimizer = True
+            ),
+            TrainerParams(
+                batch_transitions_by_env_trajectory = True, # Must be enabled for PPO
+                num_epochs = 2000,
+                batches_per_epoch = 1,
+                batch_size = 128,
+                updates_per_batch = 1,
+                shuffle_batches = False, # False to not interfere with GAE creation
+                save_model_frequency=20,
+                save_location = "./saved_models/HalfCheetahPPO2",
+                preprocess_action = lambda x: x.view((self.num_envs,6)).to(dtype=torch.float32).numpy()
+            ),
+            EnvParams(
+                env_name = "HalfCheetah-v4",
+                env_normalization=False,
+                num_envs = self.num_envs,
+                max_episode_steps = self.max_episode_steps,
+                vector_env=True,
+                misc_arguments = {
+                    "max_episode_steps": self.max_episode_steps,
+                    "render_mode": "rgb_array"
+                }
+            )
+        )
+
+class PPO2ReacherConfig(Config):
+    def __init__(self):
+        self.max_episode_steps = 1024
+        self.num_envs = 2
+        super().__init__(
+            PPO2Params(
+                clip = 0.2,
+                gamma = 0.99,
+                policy_learning_rate = 2e-4,
+                value_learning_rate = 1e-3,
+                entropy_coefficient = 0.01,
+                hidden_size = 256,
+                gae_lambda = 0.95,
+                reward_ema_coefficient = 0.99,
+                clipped_value_loss_eps = 0.2,
+                max_grad_norm = .5,
+                use_moving_average_reward = True,
+                combined_optimizer = True
+            ),
+            TrainerParams(
+                batch_transitions_by_env_trajectory = True, # Must be enabled for PPO
+                num_epochs = 2000,
+                batches_per_epoch = 1,
+                batch_size = 256,
+                updates_per_batch = 1,
+                shuffle_batches = False, # False to not interfere with GAE creation
+                save_model_frequency=20,
+                save_location = "./saved_models/ReacherPPO2",
+                preprocess_action = lambda x: x.numpy()
+            ),
+            EnvParams(
+                env_name = "Reacher-v4",
+                env_normalization=False,
+                num_envs = self.num_envs,
+                max_episode_steps = self.max_episode_steps,
+                vector_env=True,
+                misc_arguments = {
+                    "max_episode_steps": self.max_episode_steps,
+                    "render_mode": "rgb_array"
+                }
+            )
+        )
+
+class PPO2BraxHalfCheetahConfig(Config):
+    def __init__(self):
+        self.max_episode_steps = 256
+        self.num_envs = 128
+
+        super().__init__(
+            PPO2Params(
+                clip = 0.12,
+                gamma = 0.97,
+                policy_learning_rate = 2e-4,
+                entropy_coefficient = 0.1,
+                hidden_size = 256,
+                gae_lambda = 0.95,
+                clipped_value_loss_eps = 0.12,
+                value_loss_weight = 0.5,
+                max_grad_norm = 2.0,
+                use_moving_average_reward = True,
+                combined_optimizer = True
+            ),
+            TrainerParams(
+                batch_transitions_by_env_trajectory = True, # Must be enabled for PPO
+                num_epochs = 2000,
+                batches_per_epoch = 1,
+                batch_size = 128,
+                updates_per_batch = 1,
+                shuffle_batches = False, # False to not interfere with GAE creation
+                save_location = "./saved_models/HalfCheetahPPO"
+            ),
+            EnvParams(
+                env_name = "brax-half-cheetah",
+                env_normalization=False,
+                num_envs = self.num_envs,
+                max_episode_steps = self.max_episode_steps,
+                vector_env=False, # Brax will init 'n' environments on its side
+                misc_arguments = {
+                    "batch_size": self.num_envs, # Brax's convention uses batch_size for num_environments
+                    "episode_length": self.max_episode_steps,
+                    "action_repeat": 0,
+                    "forward_reward_weight": 1.,
+                    "ctrl_cost_weight": 0.1,
+                    "legacy_spring" : True,
+                    "exclude_current_positions_from_observation": False,
+                    "reset_noise_scale": 0.1,
                 }
             )
         )

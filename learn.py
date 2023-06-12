@@ -12,7 +12,7 @@ sys.path.append(src_path)
 from src.TrainPresets import *
 from src.TrainPresets import Config
 from src.Trainer import Trainer
-from src.Utilities import set_random_seeds, RunningMeanStd
+from src.Utilities import set_random_seeds, RunningMeanStd, clear_directories
 from src.wrappers import RecordVideoWrapper
 
 import torch
@@ -109,6 +109,7 @@ gym.register(
 if __name__ == "__main__":
     # Misc setup
     set_random_seeds()
+    clear_directories()  # TODO Make this a command line argument.
     args = parser.parse_args()
     device = torch.device(
         "mps" if torch.has_mps else (# MACOS

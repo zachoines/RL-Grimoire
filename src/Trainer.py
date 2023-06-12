@@ -121,24 +121,24 @@ class Trainer:
             other = other.cpu()
             action = action.cpu()
             action = self.train_params.preprocess_action(action)
-            # torch.clamp(action, min=self.action_min, max=self.action_max)
-            next_state, reward, done, _, _ = self.env.step(action)
+            next_state, reward, done, trunc, _ = self.env.step(action)
         
             # Convert to tensor if not
             action = to_tensor(action, device=self.device)
             next_state = to_tensor(next_state, device=self.device)
             reward = to_tensor(reward, device=self.device)
             done = to_tensor(done, device=self.device)
-            
+            trunc = to_tensor(trunc, device=self.device)
+
             if self.env_params.env_normalization:
                 next_state = self.normalizer.normalize(next_state)
             
             self.writer.add_scalar(tag="Step Rewards", scalar_value=reward.mean(), global_step=self.current_step) # type: ignore
             
             if self.train_params.batch_transitions_by_env_trajectory:
-                self.exp_buffer.append([Transition(self.state, action, next_state, reward, done, other)])
+                self.exp_buffer.append([Transition(self.state, action, next_state, reward, done, trunc, other)])
             else:
-                self.exp_buffer.append([Transition(s, a, n_s, r, d, o) for s, a, n_s, r, d, o in zip(self.state, action, next_state, reward, done, other)]) # type: ignore
+                self.exp_buffer.append([Transition(s, a, n_s, r, d, t, o) for s, a, n_s, r, d, t, o in zip(self.state, action, next_state, reward, done, trunc, other)]) # type: ignore
             self.state = next_state
 
     def __next__(self):

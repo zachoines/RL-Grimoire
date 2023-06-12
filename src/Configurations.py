@@ -103,14 +103,15 @@ class PPOParams(A2CParams):
 
 class PPO2Params(PPOParams):
     def __init__(self, 
-                 gae_lambda: float = 0.9, 
+                 gae_lambda: float = 0.95, 
                  log_std_min: float = -20.0, 
                  log_std_max: float = 2.0, 
                  policy_loss_weight: float = 1.0, 
-                 value_loss_weight: float = 0.5, 
+                 value_loss_weight: float = .5, 
                  use_moving_average_reward: bool = True, 
                  reward_ema_coefficient: float = 0.99,
                  clipped_value_loss_eps: float = 0.2,
+                 combined_optimizer: bool = False,
                  *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.gae_lambda = gae_lambda
@@ -121,6 +122,7 @@ class PPO2Params(PPOParams):
         self.use_moving_average_reward = use_moving_average_reward
         self.reward_ema_coefficient = reward_ema_coefficient
         self.clipped_value_loss_eps = clipped_value_loss_eps
+        self.combined_optimizer = combined_optimizer
         self.agent_name = "PPO2"
 
 class Config(object):

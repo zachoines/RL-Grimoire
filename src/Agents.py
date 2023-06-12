@@ -17,7 +17,7 @@ from Datasets import Transition
 from Configurations import *
 from Policies import *
 from Networks import *
-from Utilities import to_tensor
+from Utilities import to_tensor, RewardNormalizer
 
 class Agent:
     def __init__(
@@ -102,9 +102,7 @@ class PPO2(Agent):
             self.actor = GaussianGradientPolicy(
                 self.state_size, 
                 self.num_actions, 
-                self.hidden_size // 2, 
-                log_std_min=self.hyperparams.log_std_min,
-                log_std_max=self.hyperparams.log_std_max,
+                64,
                 device=device
             )
             self.critic = ValueNetwork(
@@ -125,49 +123,126 @@ class PPO2(Agent):
             raise NotImplementedError
         
         self.optimizers = self.get_optimizers()
-
-        # Initialize running mean and variance for reward normalization
-        self.running_mean_reward = 0
-        self.running_var_reward = 1
-        
         self.update_count = 0
-        self.update_frequency = 10
-        
+
+        self.reward_normalizer = RewardNormalizer()
+        self.advantage_normalizer = RewardNormalizer()
+
     def get_actions(self, state: torch.Tensor, eval=False)->tuple[Tensor, Tensor]:
         if self.is_continous():
             mean, std = self.actor(state)
-            # mean = self.rescaleAction(mean, self.action_min, self.action_max)
             normal = torch.distributions.Normal(mean, std) 
 
             if eval:
-                return mean, normal.log_prob(mean).sum(dim=-1)
+                action = mean
             else:
-                action_sample = normal.sample()
-                return action_sample, normal.log_prob(action_sample).sum(dim=-1)
+                action = normal.sample()
+
+            # Clip the action to the valid range
+            action = action.clamp(-1.0, 1.0)
+    
+            return action, normal.log_prob(action).sum(dim=-1)
         else:
             raise NotImplementedError
         
+    def compute_gae_and_targets_truncated_time_horizon(self, rewards, dones, truncs, values, next_values, batch_size, time_horizon, gamma=0.99, lambda_=0.95):
 
-    def learn(self, batch: list[Transition], num_envs: int, batch_size: int, num_rounds: int = 8, mini_batch_size: int = 64) -> dict[str, Tensor]:
+        """
+            Wraps compute_gae_and_targets() method. Mean't to compute targets and adantages when batch sizes are very large.
+            This prevents advantages from exploding in size. Say if you have a single environment with 
+            a batch size of 2048,  then this function will chunk that batch into several "time_horizon" sized mini-batches, 
+            computing GAE on each of those mini-batches. These are then concatenated and returned. This 
+        """
+
+        # Split batch into smaller batches
+        num_mini_batches = batch_size // time_horizon
+        targets_all = []
+        advantages_all = []
+        
+        for i in range(num_mini_batches):
+            start = i * time_horizon
+            end = (i + 1) * time_horizon
+            mb_rewards = rewards[:, start:end]
+            mb_dones = dones[:, start:end]
+            mb_truncs = truncs[:, start:end]
+            mb_values = values[:, start:end]
+            mb_next_values = next_values[:, start:end]
+            
+            targets, advantages = self.compute_gae_and_targets(
+                mb_rewards, 
+                mb_dones, 
+                mb_truncs, 
+                mb_values, 
+                mb_next_values,
+                time_horizon, 
+                gamma,
+                lambda_
+            )
+            
+            targets_all.append(targets)
+            advantages_all.append(advantages)
+
+        targets_all = torch.cat(targets_all, dim=1)
+        advantages_all = torch.cat(advantages_all, dim=1)
+
+        return targets_all, advantages_all
+
+        
+    def compute_gae_and_targets(self, rewards, dones, truncs, values, next_values, batch_size, gamma=0.99, lambda_=0.95):
+        """
+        Compute GAE and bootstrapped targets for PPO.
+
+        :param rewards: (torch.Tensor) Rewards.
+        :param dones: (torch.Tensor) Done flags.
+        :param truncs: (torch.Tensor) Truncation flags.
+        :param values: (torch.Tensor) State values.
+        :param next_values: (torch.Tensor) Next state values.
+        :param num_envs: (int) Number of environments.
+        :param batch_size: (int) Batch size.
+        :param gamma: (float) Discount factor.
+        :param lambda_: (float) GAE smoothing factor.
+        :param ema_decay: (float) Decay factor for EMA calculation.
+        :return: Bootstrapped targets and advantages.
+
+        The λ parameter in the Generalized Advantage Estimation (GAE) algorithm acts as a trade-off between bias and variance in the advantage estimation.
+        When λ is close to 0, the advantage estimate is more biased, but it has less variance. It would rely more on the current reward and less on future rewards. This could be useful when your reward signal is very noisy because it reduces the impact of that noise on the advantage estimate.
+        On the other hand, when λ is close to 1, the advantage estimate has more variance but is less biased. It will take into account a longer sequence of future rewards.
+        """
+        advantages = torch.zeros_like(rewards)
+        last_gae_lam = 0
+
+        for t in reversed(range(batch_size)):
+            non_terminal = 1.0 - torch.clamp(dones[:, t] - truncs[:, t], 0.0, 1.0)
+            delta = (rewards[:, t] + (gamma * next_values[:, t] * non_terminal)) - values[:, t]
+            last_gae_lam = delta + (gamma * lambda_ * non_terminal * last_gae_lam)
+            advantages[:, t] = last_gae_lam * non_terminal
+
+        # Compute bootstrapped targets by adding unnormalized advantages to values
+        targets = values + advantages
+
+        # Normalize the advantages for the policy update
+        # advantages = self.advantage_normalizer.update(advantages)
+        #advantages = (advantages - advantages.mean()) / (advantages.std() + self.eps)
+
+        return targets, advantages
+
+    def learn(self, batch: list[Transition], num_envs: int, batch_size: int, num_rounds: int = 8, mini_batch_size: int = 32) -> dict[str, Tensor]:
         self.update_count += 1
 
         # Reshape batch to gathered lists
-        states, actions, next_states, rewards, dones, other = map(torch.stack, zip(*batch))
+        states, actions, next_states, rewards, dones, truncs, other = map(torch.stack, zip(*batch))
 
         # Reshape and send to device
         states = states.to(device=self.device, dtype=torch.float32).view((num_envs, batch_size, -1))
         actions = actions.to(device=self.device, dtype=torch.float32).view((num_envs, batch_size, -1))
         next_states = next_states.to(device=self.device, dtype=torch.float32).view((num_envs, batch_size, -1))
         dones = dones.to(device=self.device, dtype=torch.float32).view((num_envs, batch_size, -1))
+        truncs = truncs.to(device=self.device, dtype=torch.float32).view((num_envs, batch_size, -1))
         prev_log_probs = other.to(device=self.device, dtype=torch.float32).view((num_envs, batch_size))
-        
+
         # Update running mean and variance and normalize rewards
         if self.hyperparams.use_moving_average_reward:
-            self.running_mean_reward = self.hyperparams.reward_ema_coefficient * self.running_mean_reward + (1.0 - self.hyperparams.reward_ema_coefficient) * rewards.mean()
-            self.running_var_reward = self.hyperparams.reward_ema_coefficient * self.running_var_reward + (1.0 - self.hyperparams.reward_ema_coefficient) * ((rewards - self.running_mean_reward) ** 2).mean()
-            rewards = (rewards - self.running_mean_reward) / (torch.sqrt(self.running_var_reward) + self.eps)
-        else:
-            rewards = (rewards - rewards.mean()) / (rewards.std() + self.eps)
+            rewards = self.reward_normalizer.update(rewards)
 
         rewards = rewards.to(device=self.device, dtype=torch.float32).view((num_envs, batch_size, -1))
 
@@ -177,34 +252,13 @@ class PPO2(Agent):
             next_values = self.critic(next_states.view(-1, next_states.size(-1)))
             old_values = self.old_critic(states.view(-1, states.size(-1)))
 
-        # Reshape back to original dimensions for G_t and deltas computation
-        values = values.view(num_envs, batch_size, -1)
-        next_values = next_values.view(num_envs, batch_size, -1)
-        old_values = old_values.view(num_envs, batch_size, -1)
+            # Reshape back to original dimensions for G_t and deltas computation
+            values = values.view(num_envs, batch_size, -1)
+            next_values = next_values.view(num_envs, batch_size, -1)
+            old_values = old_values.view(num_envs, batch_size, -1)
 
-        # Calculate advantages with gae
-        advantages_all = torch.zeros_like(values)
-        advantages = torch.zeros((num_envs, 1), device=self.device)
-
-        for t in reversed(range(batch_size)):
-            # Non-terminal mask for this timestep
-            non_terminal = 1.0 - dones[:, t]
-
-            # Adjust next_values for terminal states
-            next_values_adjusted: torch.Tensor
-            if t == batch_size - 1:
-                next_values_adjusted = dones[:, t] * next_values[:, t]
-            else:
-                next_values_adjusted = dones[:, t] * next_values[:, t] + (1.0 - dones[:, t]) * next_values[:, t+1]
-
-            # Compute the delta for this timestep
-            delta = rewards[:, t] + self.hyperparams.gamma * non_terminal * next_values_adjusted - values[:, t]
-
-            # Update advantages with delta and discounted, lambda-scaled future advantage
-            advantages = delta + self.hyperparams.gamma * self.hyperparams.gae_lambda * non_terminal * advantages
-
-            # Store this timestep's advantages
-            advantages_all[:, t] = advantages
+            # Calculate advantages with GAE
+            targets, advantages_all = self.compute_gae_and_targets(rewards, dones, truncs, values, next_values, batch_size, self.hyperparams.gamma, self.hyperparams.gae_lambda)
 
         # Flatten states, actions, log probabilities, advantages, and targets
         states = states.view(-1, states.size(-1))
@@ -213,13 +267,10 @@ class PPO2(Agent):
         old_values = old_values.view(-1, 1)
         prev_log_probs = prev_log_probs.view(-1)
         advantages_all = advantages_all.view(-1)
-        
-        # Normalize advantages and calculate targets (while shifting their mean towards actual returns)
-        advantages_all = ((advantages_all - advantages_all.mean()) / (advantages_all.std() + self.eps)).view(-1)
-        targets = (advantages_all + values)
+        targets = targets.view(-1)
 
         # Initialize loss and entropy accumulators
-        total_loss_combined, total_loss_actor, total_loss_critic, total_entropy = 0, 0, 0, 0
+        total_loss_combined, total_loss_actor, total_loss_critic, total_entropy = to_tensor(0, requires_grad=False), to_tensor(0, requires_grad=False), to_tensor(0, requires_grad=False), to_tensor(0, requires_grad=False)
 
         # Perform multiple rounds of learning
         for _ in range(num_rounds):
@@ -250,47 +301,61 @@ class PPO2(Agent):
                 log_probs = dist.log_prob(mb_actions).sum(dim=-1)
 
                 # Compute entropy bonus
-                entropy = dist.entropy().mean()
+                entropy = dist.entropy().mean(dim=-1)
 
                 # Compute the policy loss using the PPO clipped objective
                 ratio = torch.exp(log_probs - mb_old_log_probs)
-                loss_policy = -torch.min(
+                loss_policy = (-torch.min(
                     ratio * mb_advantages,
-                    torch.clamp(ratio, 1.0 - self.hyperparams.clip, 1.0 + self.hyperparams.clip) * mb_advantages
-                ).mean() - self.hyperparams.entropy_coefficient * entropy
+                    ratio.clip(1.0 - self.hyperparams.clip, 1.0 + self.hyperparams.clip) * mb_advantages
+                ) - (self.hyperparams.entropy_coefficient * entropy)).mean()
 
                 # Compute the value loss with clipping
                 predicted_values = self.critic(mb_states)
                 clipped_values = mb_old_values + (predicted_values - mb_old_values).clamp(-self.hyperparams.clipped_value_loss_eps, self.hyperparams.clipped_value_loss_eps)
-                loss_value1 = F.mse_loss(predicted_values, mb_targets)
-                loss_value2 = F.mse_loss(clipped_values, mb_targets)
-                loss_value = torch.max(loss_value1, loss_value2)
+                loss_value1 = F.smooth_l1_loss(predicted_values, mb_targets)
+                loss_value2 = F.smooth_l1_loss(clipped_values, mb_targets)
+                loss_value = torch.min(loss_value1, loss_value2)
+            
+                if self.hyperparams.combined_optimizer:
+                    # Combine the losses
+                    total_loss = self.hyperparams.policy_loss_weight * loss_policy + self.hyperparams.value_loss_weight * loss_value
 
-                # Combine the losses
-                total_loss = self.hyperparams.policy_loss_weight * loss_policy + self.hyperparams.value_loss_weight * loss_value
+                    # Backpropagate the total loss
+                    total_loss.backward()
 
-                # Backpropagate the total loss
-                total_loss.backward()
+                    # Perform a single optimization step, clip gradients before step
+                    clip_grad_norm_(self.optimizers["combined"].param_groups[0]['params'], self.hyperparams.max_grad_norm)
+                    self.optimizers["combined"].step()
 
-                # Clip the gradients
-                clip_grad_norm_(self.optimizer.param_groups[0]['params'], self.hyperparams.max_grad_norm)
-
-                # Perform a single optimization step
-                self.optimizer.step()
-                # self.scheduler.step()
-
-                # Clear the gradients
-                self.optimizer.zero_grad()
+                    # Clear the gradients
+                    self.optimizers["combined"].zero_grad()
+                
+                else:
+                    # Optimize the models
+                    loss_policy.backward()
+                    loss_value.backward()
+                    
+                    clip_grad_norm_(self.optimizers["actor"].param_groups[0]['params'], self.max_grad_norm)
+                    clip_grad_norm_(self.optimizers["critic"].param_groups[0]['params'], self.max_grad_norm)
+                    
+                    self.optimizers['actor'].step()
+                    self.optimizers['critic'].step()
+                    
+                    self.optimizers['critic'].zero_grad()
+                    self.optimizers['actor'].zero_grad()
+                
 
                 # Accumulate losses and entropy
-                total_loss_actor += loss_policy.item()
-                total_loss_critic += loss_value.item()
-                total_loss_combined += total_loss.item()
-                total_entropy += entropy.item()
+                with torch.no_grad():
+                    total_loss_combined += (loss_policy + loss_value).cpu()
+                    total_loss_actor += loss_policy.cpu()
+                    total_loss_critic += loss_value.cpu()
+                    total_entropy += entropy.mean().cpu()
 
-        
-        # Copy over new parameters
-        self.old_critic.load_state_dict(self.critic.state_dict())
+        # Update the old critic network by copying the current critic network weights
+        if self.update_count % 10 == 0:
+            self.old_critic.load_state_dict(self.critic.state_dict())
 
         # Compute average losses and entropy
         total_loss_actor /= (num_rounds * states.size(0) / mini_batch_size)
@@ -298,10 +363,11 @@ class PPO2(Agent):
         total_entropy /= (num_rounds * states.size(0) / mini_batch_size)
         total_loss_combined /= (num_rounds * states.size(0) / mini_batch_size)
         return {
-            "Actor loss": to_tensor(total_loss_actor),
-            "Critic loss": to_tensor(total_loss_critic),
-            "Total loss": to_tensor(total_loss_combined),
-            "Entropy": to_tensor(total_entropy),
+            "Actor loss": total_loss_actor,
+            "Critic loss": total_loss_critic,
+            "Total loss": total_loss_combined,
+            "Entropy": total_entropy,
+            "Advantages" : advantages_all.mean(),
             "Train Rewards": rewards.mean(),
             "Total Batch Rewards": rewards.sum()
         }
@@ -315,27 +381,32 @@ class PPO2(Agent):
         )
 
     def get_optimizers(self) -> Dict[str, Optimizer | lr_scheduler.LRScheduler]:
-        self.optimizer = AdamW(
-            chain(self.actor.parameters(), self.critic.parameters()), 
-            lr=self.hyperparams.policy_learning_rate,
-            weight_decay=1e-4
-        )
 
-        self.scheduler = torch.optim.lr_scheduler.LambdaLR(
-            self.optimizer, 
-            lr_lambda=self.create_lr_lambda(
-                1.0,  # Maximum multiplicative factor
-                1.0 / 20.0,  # Minimum multiplicative factor
-                5000,
-                100000
-            )
-        )
+        if self.hyperparams.combined_optimizer:
+        
+            # self.scheduler = torch.optim.lr_scheduler.LambdaLR(
+            #     self.optimizer, 
+            #     lr_lambda=self.create_lr_lambda(
+            #         1.0,  # Maximum multiplicative factor
+            #         1.0 / 20.0,  # Minimum multiplicative factor
+            #         5000,
+            #         100000
+            #     )
+            # )
 
-        return {
-            "combined": self.optimizer,
-            "combined_scheduler": self.scheduler
-        }
-    
+            return {
+                "combined": AdamW(
+                    chain(self.actor.parameters(), self.critic.parameters()), 
+                    lr=self.hyperparams.policy_learning_rate
+                )
+            }
+        
+        else:
+            return {
+                "actor": AdamW(self.actor.parameters(), lr=self.hyperparams.policy_learning_rate),
+                "critic": AdamW(self.critic.parameters(), lr=self.hyperparams.value_learning_rate),
+            }
+
     def state_dict(self)-> Dict[str,Dict]:
         return {
             "actor": self.actor.state_dict()
@@ -344,7 +415,6 @@ class PPO2(Agent):
     def load(self, location: str)->None:
         state_dicts = torch.load(location)
         self.actor.load_state_dict(state_dicts["actor"])
-
 
 
 class PPO(Agent):

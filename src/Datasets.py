@@ -1,7 +1,7 @@
 import random
 from collections import namedtuple
 
-Transition = namedtuple('Transition', ('state', 'action', 'next_state', 'reward', 'done', 'other'))
+Transition = namedtuple('Transition', ('state', 'action', 'next_state', 'reward', 'done', 'trunc', 'other'))
 
 class ExperienceBuffer:
     def __init__(self, capacity = 1000000):
@@ -27,7 +27,6 @@ class ExperienceBuffer:
     def remove(self, samples: list[Transition]):
         for sample in samples:
             self.buffer.remove(sample)
-
 
     def empty(self):
         self.buffer = []
