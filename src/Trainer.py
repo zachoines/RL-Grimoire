@@ -124,11 +124,13 @@ class Trainer:
             next_state, reward, done, trunc, _ = self.env.step(action)
         
             # Convert to tensor if not
+            other = to_tensor(other, device=self.device)
             action = to_tensor(action, device=self.device)
             next_state = to_tensor(next_state, device=self.device)
             reward = to_tensor(reward, device=self.device)
             done = to_tensor(done, device=self.device)
             trunc = to_tensor(trunc, device=self.device)
+            self.state = to_tensor(self.state, device=self.device)
 
             if self.env_params.env_normalization:
                 next_state = self.normalizer.normalize(next_state)
