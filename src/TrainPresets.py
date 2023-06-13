@@ -363,7 +363,7 @@ class PPO2ReacherConfig(Config):
                 gae_lambda = 0.95,
                 reward_ema_coefficient = 0.99,
                 clipped_value_loss_eps = 0.2,
-                max_grad_norm = .5,
+                max_grad_norm = 1.0,
                 use_moving_average_reward = True,
                 combined_optimizer = True
             ),
@@ -393,22 +393,23 @@ class PPO2ReacherConfig(Config):
 
 class PPO2BraxHalfCheetahConfig(Config):
     def __init__(self):
-        self.max_episode_steps = 256
-        self.num_envs = 128
+        self.max_episode_steps = 1024
+        self.num_envs = 2
 
         super().__init__(
             PPO2Params(
-                clip = 0.12,
-                gamma = 0.97,
-                policy_learning_rate = 2e-4,
-                entropy_coefficient = 0.1,
-                hidden_size = 256,
+                clip = 0.2,
+                gamma = 0.99,
+                policy_learning_rate = 3e-4,
+                value_learning_rate = 3e-4,
+                entropy_coefficient = 0.02,
+                hidden_size = 512,
                 gae_lambda = 0.95,
-                clipped_value_loss_eps = 0.12,
+                clipped_value_loss_eps = 0.2,
                 value_loss_weight = 0.5,
                 max_grad_norm = 2.0,
                 use_moving_average_reward = True,
-                combined_optimizer = True
+                combined_optimizer = False
             ),
             TrainerParams(
                 batch_transitions_by_env_trajectory = True, # Must be enabled for PPO
@@ -428,8 +429,8 @@ class PPO2BraxHalfCheetahConfig(Config):
                 misc_arguments = {
                     "batch_size": self.num_envs, # Brax's convention uses batch_size for num_environments
                     "episode_length": self.max_episode_steps,
-                    "action_repeat": 0,
-                    "forward_reward_weight": 1.,
+                    "action_repeat": 1,
+                    "forward_reward_weight": 1.0,
                     "ctrl_cost_weight": 0.1,
                     "legacy_spring" : True,
                     "exclude_current_positions_from_observation": False,

@@ -102,7 +102,7 @@ class PPO2(Agent):
             self.actor = GaussianGradientPolicy(
                 self.state_size, 
                 self.num_actions, 
-                64,
+                512,
                 device=device
             )
             self.critic = ValueNetwork(
@@ -222,51 +222,55 @@ class PPO2(Agent):
 
         # Normalize the advantages for the policy update
         # advantages = self.advantage_normalizer.update(advantages)
-        #advantages = (advantages - advantages.mean()) / (advantages.std() + self.eps)
+        # advantages = (advantages - advantages.mean()) / (advantages.std() + self.eps)
 
         return targets, advantages
+    
 
-    def learn(self, batch: list[Transition], num_envs: int, batch_size: int, num_rounds: int = 8, mini_batch_size: int = 32) -> dict[str, Tensor]:
+    def learn(self, batch: list[Transition], num_envs: int, batch_size: int, num_rounds: int = 4, mini_batch_size: int = 32) -> dict[str, Tensor]:
         self.update_count += 1
 
         # Reshape batch to gathered lists
         states, actions, next_states, rewards, dones, truncs, other = map(torch.stack, zip(*batch))
 
         # Reshape and send to device
-        states = states.to(device=self.device, dtype=torch.float32).view((num_envs, batch_size, -1))
-        actions = actions.to(device=self.device, dtype=torch.float32).view((num_envs, batch_size, -1))
-        next_states = next_states.to(device=self.device, dtype=torch.float32).view((num_envs, batch_size, -1))
-        dones = dones.to(device=self.device, dtype=torch.float32).view((num_envs, batch_size, -1))
-        truncs = truncs.to(device=self.device, dtype=torch.float32).view((num_envs, batch_size, -1))
-        prev_log_probs = other.to(device=self.device, dtype=torch.float32).view((num_envs, batch_size))
+        states = states.permute((1, 0, 2)).to(device=self.device, dtype=torch.float32).contiguous()
+        next_states = next_states.permute((1, 0, 2)).to(device=self.device, dtype=torch.float32).contiguous()
+        actions = actions.permute((1, 0, 2)).to(device=self.device, dtype=torch.float32).contiguous()
+        dones = dones.permute((1, 0)).to(device=self.device, dtype=torch.float32).contiguous()
+        truncs = truncs.permute((1, 0)).to(device=self.device, dtype=torch.float32).contiguous()
+        prev_log_probs = other.permute((1, 0)).to(device=self.device, dtype=torch.float32).contiguous()
+        rewards = rewards.permute((1, 0)).to(device=self.device, dtype=torch.float32).contiguous()
 
         # Update running mean and variance and normalize rewards
         if self.hyperparams.use_moving_average_reward:
             rewards = self.reward_normalizer.update(rewards)
 
-        rewards = rewards.to(device=self.device, dtype=torch.float32).view((num_envs, batch_size, -1))
-
         # Compute values for states and next states
         with torch.no_grad():
-            values = self.critic(states.view(-1, states.size(-1)))
-            next_values = self.critic(next_states.view(-1, next_states.size(-1)))
-            old_values = self.old_critic(states.view(-1, states.size(-1)))
-
-            # Reshape back to original dimensions for G_t and deltas computation
-            values = values.view(num_envs, batch_size, -1)
-            next_values = next_values.view(num_envs, batch_size, -1)
-            old_values = old_values.view(num_envs, batch_size, -1)
+            values = self.critic(states)
+            next_values = self.critic(next_states)
+            # old_values = self.old_critic(next_states)
 
             # Calculate advantages with GAE
-            targets, advantages_all = self.compute_gae_and_targets(rewards, dones, truncs, values, next_values, batch_size, self.hyperparams.gamma, self.hyperparams.gae_lambda)
+            targets, advantages_all = self.compute_gae_and_targets(
+                rewards.unsqueeze(-1), 
+                dones.unsqueeze(-1), 
+                truncs.unsqueeze(-1), 
+                values, 
+                next_values, 
+                batch_size, 
+                self.hyperparams.gamma, 
+                self.hyperparams.gae_lambda
+            )
 
         # Flatten states, actions, log probabilities, advantages, and targets
         states = states.view(-1, states.size(-1))
-        actions = actions.view(-1, actions.size(-1))
         values = values.view(-1)
-        old_values = old_values.view(-1, 1)
+        # old_values = old_values.view(-1, 1)
         prev_log_probs = prev_log_probs.view(-1)
         advantages_all = advantages_all.view(-1)
+        actions = actions.view(-1, actions.size(-1))
         targets = targets.view(-1)
 
         # Initialize loss and entropy accumulators
@@ -288,7 +292,7 @@ class PPO2(Agent):
 
                 # Extract mini-batch data
                 with torch.no_grad():
-                    mb_old_values = old_values[ids]
+                    # mb_old_values = old_values[ids]
                     mb_states = states[ids]
                     mb_actions = actions[ids]
                     mb_old_log_probs = prev_log_probs[ids]
@@ -311,12 +315,12 @@ class PPO2(Agent):
                 ) - (self.hyperparams.entropy_coefficient * entropy)).mean()
 
                 # Compute the value loss with clipping
-                predicted_values = self.critic(mb_states)
-                clipped_values = mb_old_values + (predicted_values - mb_old_values).clamp(-self.hyperparams.clipped_value_loss_eps, self.hyperparams.clipped_value_loss_eps)
-                loss_value1 = F.smooth_l1_loss(predicted_values, mb_targets)
-                loss_value2 = F.smooth_l1_loss(clipped_values, mb_targets)
-                loss_value = torch.min(loss_value1, loss_value2)
-            
+                # clipped_values = mb_old_values + (predicted_values - mb_old_values).clamp(-self.hyperparams.clipped_value_loss_eps, self.hyperparams.clipped_value_loss_eps)
+                # loss_value1 = F.mse_loss(predicted_values, mb_targets)
+                # loss_value2 = F.mse_loss(clipped_values, mb_targets)
+                # loss_value = torch.min(loss_value1, loss_value2)
+                loss_value = F.smooth_l1_loss(self.critic(mb_states), mb_targets)
+
                 if self.hyperparams.combined_optimizer:
                     # Combine the losses
                     total_loss = self.hyperparams.policy_loss_weight * loss_policy + self.hyperparams.value_loss_weight * loss_value
@@ -354,8 +358,8 @@ class PPO2(Agent):
                     total_entropy += entropy.mean().cpu()
 
         # Update the old critic network by copying the current critic network weights
-        if self.update_count % 10 == 0:
-            self.old_critic.load_state_dict(self.critic.state_dict())
+        # if self.update_count % 5 == 0:
+        #     self.old_critic.load_state_dict(self.critic.state_dict())
 
         # Compute average losses and entropy
         total_loss_actor /= (num_rounds * states.size(0) / mini_batch_size)
