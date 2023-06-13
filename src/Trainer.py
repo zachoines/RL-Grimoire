@@ -121,7 +121,7 @@ class Trainer:
             other = other.cpu()
             action = action.cpu()
             action = self.train_params.preprocess_action(action)
-            next_state, reward, done, trunc, _ = self.env.step(action)
+            next_state, reward, done, trunc, _ = self.env.step(action.clamp(self.action_min, self.action_max))
         
             # Convert to tensor if not
             other = to_tensor(other, device=self.device)

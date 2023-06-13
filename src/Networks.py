@@ -44,6 +44,8 @@ class ValueNetwork(nn.Module):
         self.value_net = nn.Sequential(
             nn.Linear(in_features, hidden_size),
             nn.LeakyReLU(),
+            nn.Linear(hidden_size, hidden_size),
+            nn.LeakyReLU(),
             nn.Linear(hidden_size, 1)
         )
         

@@ -31,15 +31,19 @@ class GaussianGradientPolicy(nn.Module):
 
         self.shared_net = nn.Sequential(
             nn.Linear(in_features, hidden_size),
-            nn.LeakyReLU(),
+            nn.LeakyReLU()
         )
 
         self.mean = nn.Sequential(
+            nn.Linear(hidden_size, hidden_size),
+            nn.LeakyReLU(),
             nn.Linear(hidden_size, out_features),
             nn.Tanh()
         )
 
         self.log_std = nn.Sequential(
+            nn.Linear(hidden_size, hidden_size),
+            nn.LeakyReLU(),
             nn.Linear(hidden_size, out_features),
             nn.Softplus()
         )
@@ -59,6 +63,6 @@ class GaussianGradientPolicy(nn.Module):
     def forward(self, state):
         shared_features = self.shared_net(state.to(self.device))
         means = self.mean(shared_features)
-        stds = self.log_std(shared_features) + 0.001
-        # stds = torch.clamp(stds, min=self.min_std_value)
+        stds = self.log_std(shared_features)
+        stds = torch.clamp(stds, min=self.min_std_value)
         return means, stds

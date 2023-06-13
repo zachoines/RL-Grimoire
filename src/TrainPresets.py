@@ -394,20 +394,20 @@ class PPO2ReacherConfig(Config):
 class PPO2BraxHalfCheetahConfig(Config):
     def __init__(self):
         self.max_episode_steps = 1024
-        self.num_envs = 32
+        self.num_envs = 128
 
         super().__init__(
             PPO2Params(
                 clip = 0.2,
                 gamma = 0.99,
                 policy_learning_rate = 3e-4,
-                value_learning_rate = 5e-4,
-                entropy_coefficient = 0.1,
+                value_learning_rate = 1e-3,
+                entropy_coefficient = 0.01,
                 hidden_size = 256,
                 gae_lambda = 0.95,
                 clipped_value_loss_eps = 0.2,
                 value_loss_weight = 0.5,
-                max_grad_norm = .50,
+                max_grad_norm = .5,
                 use_moving_average_reward = True,
                 combined_optimizer = False
             ),
@@ -430,8 +430,8 @@ class PPO2BraxHalfCheetahConfig(Config):
                     "batch_size": self.num_envs, # Brax's convention uses batch_size for num_environments
                     "episode_length": self.max_episode_steps,
                     "action_repeat": 1,
-                    "forward_reward_weight": 1.0,
-                    "ctrl_cost_weight": 0.1,
+                    "forward_reward_weight": .1,
+                    "ctrl_cost_weight": 0.01,
                     "legacy_spring" : True,
                     "exclude_current_positions_from_observation": False,
                     "reset_noise_scale": 0.1,
