@@ -32,17 +32,15 @@ class GaussianGradientPolicy(nn.Module):
         self.shared_net = nn.Sequential(
             nn.Linear(in_features, hidden_size),
             nn.LeakyReLU(),
-            nn.Linear(hidden_size, hidden_size // 2),
-            nn.LeakyReLU()
         )
 
         self.mean = nn.Sequential(
-            nn.Linear(hidden_size // 2, out_features),
+            nn.Linear(hidden_size, out_features),
             nn.Tanh()
         )
 
         self.log_std = nn.Sequential(
-            nn.Linear(hidden_size // 2, out_features),
+            nn.Linear(hidden_size, out_features),
             nn.Softplus()
         )
 

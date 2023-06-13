@@ -102,7 +102,7 @@ class PPO2(Agent):
             self.actor = GaussianGradientPolicy(
                 self.state_size, 
                 self.num_actions, 
-                512,
+                64,
                 device=device
             )
             self.critic = ValueNetwork(
@@ -221,7 +221,7 @@ class PPO2(Agent):
         targets = values + advantages
 
         # Normalize the advantages for the policy update
-        # advantages = self.advantage_normalizer.update(advantages)
+        advantages = self.advantage_normalizer.update(advantages)
         # advantages = (advantages - advantages.mean()) / (advantages.std() + self.eps)
 
         return targets, advantages
@@ -319,7 +319,7 @@ class PPO2(Agent):
                 # loss_value1 = F.mse_loss(predicted_values, mb_targets)
                 # loss_value2 = F.mse_loss(clipped_values, mb_targets)
                 # loss_value = torch.min(loss_value1, loss_value2)
-                loss_value = F.smooth_l1_loss(self.critic(mb_states), mb_targets)
+                loss_value = F.mse_loss(self.critic(mb_states), mb_targets)
 
                 if self.hyperparams.combined_optimizer:
                     # Combine the losses

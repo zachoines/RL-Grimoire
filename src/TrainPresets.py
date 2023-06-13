@@ -394,20 +394,20 @@ class PPO2ReacherConfig(Config):
 class PPO2BraxHalfCheetahConfig(Config):
     def __init__(self):
         self.max_episode_steps = 1024
-        self.num_envs = 2
+        self.num_envs = 32
 
         super().__init__(
             PPO2Params(
                 clip = 0.2,
                 gamma = 0.99,
                 policy_learning_rate = 3e-4,
-                value_learning_rate = 3e-4,
-                entropy_coefficient = 0.02,
-                hidden_size = 512,
+                value_learning_rate = 5e-4,
+                entropy_coefficient = 0.1,
+                hidden_size = 256,
                 gae_lambda = 0.95,
                 clipped_value_loss_eps = 0.2,
                 value_loss_weight = 0.5,
-                max_grad_norm = 2.0,
+                max_grad_norm = .50,
                 use_moving_average_reward = True,
                 combined_optimizer = False
             ),
@@ -415,7 +415,7 @@ class PPO2BraxHalfCheetahConfig(Config):
                 batch_transitions_by_env_trajectory = True, # Must be enabled for PPO
                 num_epochs = 2000,
                 batches_per_epoch = 1,
-                batch_size = 128,
+                batch_size = 256,
                 updates_per_batch = 1,
                 shuffle_batches = False, # False to not interfere with GAE creation
                 save_location = "./saved_models/HalfCheetahPPO"
