@@ -224,7 +224,7 @@ class PPO2(Agent):
         return targets, advantages
     
 
-    def learn(self, batch: list[Transition], num_envs: int, batch_size: int, num_rounds: int = 12, mini_batch_size: int = 128) -> dict[str, Tensor]:
+    def learn(self, batch: list[Transition], num_envs: int, batch_size: int, num_rounds: int = 4, mini_batch_size: int = 64) -> dict[str, Tensor]:
         self.update_count += 1
 
         # Reshape batch to gathered lists
@@ -322,14 +322,14 @@ class PPO2(Agent):
                 loss_value = F.smooth_l1_loss(self.critic(mb_states), mb_targets)
 
                 if self.hyperparams.combined_optimizer:
-                    # Combine the losses
-                    total_loss = (self.hyperparams.policy_loss_weight * loss_policy) - (self.hyperparams.entropy_coefficient * entropy) + (self.hyperparams.value_loss_weight * loss_value)
+                    # Combine the losses 
+                    total_loss = ((self.hyperparams.policy_loss_weight * loss_policy) - (self.hyperparams.entropy_coefficient * entropy)) + (self.hyperparams.value_loss_weight * loss_value)
 
                     # Backpropagate the total loss
                     total_loss.backward()
 
                     # Perform a single optimization step, clip gradients before step
-                    # clip_grad_norm_(self.optimizers["combined"].param_groups[0]['params'], self.hyperparams.max_grad_norm)
+                    clip_grad_norm_(self.optimizers["combined"].param_groups[0]['params'], self.hyperparams.max_grad_norm)
                     self.optimizers["combined"].step()
 
                     # Clear the gradients

@@ -401,14 +401,14 @@ class PPO2SwimmerConfig(Config):
             PPO2Params(
                 clip = 0.2,
                 gamma = 0.99,
-                policy_learning_rate = 2e-4,
+                policy_learning_rate = 1e-4,
                 value_learning_rate = 3e-4, # Deactivated when "combined_optimizer" enabled
-                entropy_coefficient = 0.01,
+                entropy_coefficient = 0.3,
                 hidden_size = 256,
                 gae_lambda = 0.95,
                 clipped_value_loss_eps = 0.2,
                 value_loss_weight = 0.5, # Activated when "combined_optimizer" enabled
-                max_grad_norm = 2.,
+                max_grad_norm = 1.0,
                 use_moving_average_reward = False,
                 combined_optimizer = True
             ),
@@ -416,7 +416,7 @@ class PPO2SwimmerConfig(Config):
                 batch_transitions_by_env_trajectory = True, # Must be enabled for PPO
                 num_epochs = 2000,
                 batches_per_epoch = 1,
-                batch_size = 2048,
+                batch_size = 512,
                 updates_per_batch = 1,
                 shuffle_batches = False, # False to not interfere with GAE creation
                 save_location = "./saved_models/SwimmerPPO2",
