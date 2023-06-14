@@ -31,7 +31,7 @@ class GaussianGradientPolicy(nn.Module):
 
         self.shared_net = nn.Sequential(
             nn.Linear(in_features, hidden_size),
-            nn.LeakyReLU()
+            nn.LeakyReLU(),
         )
 
         self.mean = nn.Sequential(
@@ -57,7 +57,7 @@ class GaussianGradientPolicy(nn.Module):
     def init_weights(self, m):
         if type(m) == nn.Linear:
             nn.init.kaiming_normal_(m.weight, a=0.01)
-            # m.weight.data *= 0.1
+            m.weight.data *= 0.1
             m.bias.data.fill_(0.0)
 
     def forward(self, state):

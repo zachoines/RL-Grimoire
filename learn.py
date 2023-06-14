@@ -130,7 +130,7 @@ if __name__ == "__main__":
             id = config.env_params.env_name, 
             num_envs=config.env_params.num_envs,
             wrappers=[
-                lambda env, env_id=i: RecordVideoWrapper(env, recording_length=512, enabled=(env_id==0)) for i in range(config.env_params.num_envs)
+                lambda env, env_id=i: RecordVideoWrapper(env, recording_length=512, enabled=(True)) if env_id==0 else env for i in range(config.env_params.num_envs)
             ],
             **config.env_params.misc_arguments
         )

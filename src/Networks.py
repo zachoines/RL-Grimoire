@@ -56,7 +56,7 @@ class ValueNetwork(nn.Module):
     def init_weights(self, m):
         if type(m) == nn.Linear:
             nn.init.kaiming_normal_(m.weight, a=0.01)
-            # m.weight.data *= 0.1
+            m.weight.data *= 0.1
             m.bias.data.fill_(0.0)
 
     def forward(self, x):

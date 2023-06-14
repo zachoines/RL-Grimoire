@@ -102,7 +102,7 @@ class PPO2(Agent):
             self.actor = GaussianGradientPolicy(
                 self.state_size, 
                 self.num_actions, 
-                64,
+                256,
                 device=device
             )
             self.critic = ValueNetwork(
@@ -137,7 +137,7 @@ class PPO2(Agent):
                 action = mean
             else:
                 action = normal.sample()
-    
+            action = action.clip(self.action_min, self.action_max)
             return action, normal.log_prob(action).sum(dim=-1)
         else:
             raise NotImplementedError
@@ -215,16 +215,16 @@ class PPO2(Agent):
             advantages[:, t] = last_gae_lam * non_terminal
 
         # Compute bootstrapped targets by adding unnormalized advantages to values
+        # advantages = self.advantage_normalizer.update(advantages)
         targets = values + advantages
 
         # Normalize the advantages for the policy update
-        # advantages = self.advantage_normalizer.update(advantages)
-        advantages = (advantages - advantages.mean()) / (advantages.std() + self.eps)
+        # advantages = (advantages - advantages.mean()) / (advantages.std() + self.eps)
 
         return targets, advantages
     
 
-    def learn(self, batch: list[Transition], num_envs: int, batch_size: int, num_rounds: int = 4, mini_batch_size: int = 32) -> dict[str, Tensor]:
+    def learn(self, batch: list[Transition], num_envs: int, batch_size: int, num_rounds: int = 12, mini_batch_size: int = 128) -> dict[str, Tensor]:
         self.update_count += 1
 
         # Reshape batch to gathered lists
@@ -247,7 +247,7 @@ class PPO2(Agent):
         with torch.no_grad():
             values = self.critic(states)
             next_values = self.critic(next_states)
-            old_values = self.old_critic(next_states)
+            # old_values = self.old_critic(next_states)
 
             # Calculate advantages with GAE
             targets, advantages_all = self.compute_gae_and_targets(
@@ -264,7 +264,7 @@ class PPO2(Agent):
         # Flatten states, actions, log probabilities, advantages, and targets
         states = states.view(-1, states.size(-1))
         values = values.view(-1)
-        old_values = old_values.view(-1)
+        # old_values = old_values.view(-1)
         prev_log_probs = prev_log_probs.view(-1)
         advantages_all = advantages_all.view(-1)
         actions = actions.view(-1, actions.size(-1))
@@ -289,7 +289,7 @@ class PPO2(Agent):
 
                 # Extract mini-batch data
                 with torch.no_grad():
-                    mb_old_values = old_values[ids]
+                    # mb_old_values = old_values[ids]
                     mb_states = states[ids]
                     mb_actions = actions[ids]
                     mb_old_log_probs = prev_log_probs[ids]
@@ -302,44 +302,53 @@ class PPO2(Agent):
                 log_probs = dist.log_prob(mb_actions).sum(dim=-1)
 
                 # Compute entropy bonus
-                entropy = dist.entropy().mean(dim=-1)
+                entropy = torch.mean(dist.entropy())
 
                 # Compute the policy loss using the PPO clipped objective
                 ratio = torch.exp(log_probs - mb_old_log_probs)
-                loss_policy = (-torch.min(
-                    ratio * mb_advantages,
-                    ratio.clip(1.0 - self.hyperparams.clip, 1.0 + self.hyperparams.clip) * mb_advantages
-                ) - (self.hyperparams.entropy_coefficient * entropy)).mean()
+                loss_policy = -torch.mean(
+                    torch.min(
+                        ratio * mb_advantages,
+                        ratio.clip(1.0 - self.hyperparams.clip, 1.0 + self.hyperparams.clip) * mb_advantages
+                    )
+                )
 
                 # Compute the value loss with clipping
-                predicted_values = self.critic(mb_states)
-                clipped_values = mb_old_values + (predicted_values - mb_old_values).clamp(-self.hyperparams.clipped_value_loss_eps, self.hyperparams.clipped_value_loss_eps)
-                loss_value1 = torch.square(predicted_values - mb_targets)
-                loss_value2 = torch.square(clipped_values - mb_targets)
-                loss_value = 0.5 * torch.max(loss_value1, loss_value2).mean()
-                # loss_value = F.mse_loss(self.critic(mb_states), mb_targets)
+                # predicted_values = self.critic(mb_states)
+                # clipped_values = mb_old_values + (predicted_values - mb_old_values).clamp(-self.hyperparams.clipped_value_loss_eps, self.hyperparams.clipped_value_loss_eps)
+                # loss_value1 = torch.square(predicted_values - mb_targets)
+                # loss_value2 = torch.square(clipped_values - mb_targets)
+                # loss_value = 0.5 * torch.max(loss_value1, loss_value2).mean()
+                loss_value = F.smooth_l1_loss(self.critic(mb_states), mb_targets)
 
                 if self.hyperparams.combined_optimizer:
                     # Combine the losses
-                    total_loss = self.hyperparams.policy_loss_weight * loss_policy + self.hyperparams.value_loss_weight * loss_value
+                    total_loss = (self.hyperparams.policy_loss_weight * loss_policy) - (self.hyperparams.entropy_coefficient * entropy) + (self.hyperparams.value_loss_weight * loss_value)
 
                     # Backpropagate the total loss
                     total_loss.backward()
 
                     # Perform a single optimization step, clip gradients before step
-                    clip_grad_norm_(self.optimizers["combined"].param_groups[0]['params'], self.hyperparams.max_grad_norm)
+                    # clip_grad_norm_(self.optimizers["combined"].param_groups[0]['params'], self.hyperparams.max_grad_norm)
                     self.optimizers["combined"].step()
 
                     # Clear the gradients
                     self.optimizers["combined"].zero_grad()
+
+                    # Accumulate losses and entropy
+                    with torch.no_grad():
+                        total_loss_combined += total_loss.cpu()
+                        total_loss_actor += loss_policy.cpu()
+                        total_loss_critic += loss_value.cpu()
+                        total_entropy += entropy.mean().cpu()
                 
                 else:
                     # Optimize the models
                     loss_policy.backward()
                     loss_value.backward()
                     
-                    clip_grad_norm_(self.optimizers["actor"].param_groups[0]['params'], self.max_grad_norm)
-                    clip_grad_norm_(self.optimizers["critic"].param_groups[0]['params'], self.max_grad_norm)
+                    # clip_grad_norm_(self.optimizers["actor"].param_groups[0]['params'], self.max_grad_norm)
+                    # clip_grad_norm_(self.optimizers["critic"].param_groups[0]['params'], self.max_grad_norm)
                     
                     self.optimizers['actor'].step()
                     self.optimizers['critic'].step()
@@ -348,16 +357,16 @@ class PPO2(Agent):
                     self.optimizers['actor'].zero_grad()
                 
 
-                # Accumulate losses and entropy
-                with torch.no_grad():
-                    total_loss_combined += (loss_policy + loss_value).cpu()
-                    total_loss_actor += loss_policy.cpu()
-                    total_loss_critic += loss_value.cpu()
-                    total_entropy += entropy.mean().cpu()
+                    # Accumulate losses and entropy
+                    with torch.no_grad():
+                        total_loss_combined += (loss_policy + loss_value).cpu()
+                        total_loss_actor += loss_policy.cpu()
+                        total_loss_critic += loss_value.cpu()
+                        total_entropy += entropy.mean().cpu()
 
         # Update the old critic network by copying the current critic network weights
-        if self.update_count % 5 == 0:
-            self.old_critic.load_state_dict(self.critic.state_dict())
+        # if self.update_count % 5 == 0:
+        #     self.old_critic.load_state_dict(self.critic.state_dict())
 
         # Compute average losses and entropy
         total_loss_actor /= (num_rounds * states.size(0) / mini_batch_size)

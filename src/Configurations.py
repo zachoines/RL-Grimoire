@@ -1,6 +1,6 @@
 import numpy as np
 from typing import Dict, Any
-import torch.optim.lr_scheduler as lr_scheduler
+
 
 class EnvParams(object):
     def __init__(self,
