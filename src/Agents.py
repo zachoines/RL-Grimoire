@@ -188,7 +188,7 @@ class PPO2(Agent):
         loss_clipped = (clipped_value - targets) ** 2
         return .5 * torch.max(loss_unclipped, loss_clipped).mean()
 
-    def learn(self, batch: list[Transition], num_envs: int, batch_size: int, num_rounds: int = 8, mini_batch_size: int = 256) -> dict[str, Tensor]:
+    def learn(self, batch: list[Transition], num_envs: int, batch_size: int, num_rounds: int = 12, mini_batch_size: int = 512) -> dict[str, Tensor]:
         self.update_count += 1
 
         # Reshape batch to gathered lists
@@ -202,6 +202,7 @@ class PPO2(Agent):
         truncs = truncs.permute((1, 0)).to(device=self.device, dtype=torch.float32).contiguous()
         prev_log_probs = other.permute((1, 0)).to(device=self.device, dtype=torch.float32).contiguous()
         rewards = rewards.permute((1, 0)).to(device=self.device, dtype=torch.float32).contiguous()
+        batch_rewards = rewards.clone()
 
         # Update running mean and variance and normalize rewards
         if self.hyperparams.use_moving_average_reward:
@@ -211,7 +212,7 @@ class PPO2(Agent):
         with torch.no_grad():
             values = self.critic(states)
             next_values = self.critic(next_states)
-            old_values = self.old_critic(next_states)
+            old_values = self.old_critic(next_states) if self.hyperparams.value_loss_clipping else None
 
             # Calculate advantages with GAE
             targets, advantages_all = self.compute_gae_and_targets(
@@ -228,7 +229,7 @@ class PPO2(Agent):
         # Flatten states, actions, log probabilities, advantages, and targets
         states = states.view(-1, states.size(-1))
         values = values.view(-1)
-        old_values = old_values.view(-1)
+        old_values = old_values.view(-1) if self.hyperparams.value_loss_clipping else None
         prev_log_probs = prev_log_probs.view(-1)
         advantages_all = advantages_all.view(-1)
         actions = actions.view(-1, actions.size(-1))
@@ -253,7 +254,7 @@ class PPO2(Agent):
 
                 # Extract mini-batch data
                 with torch.no_grad():
-                    mb_old_values = old_values[ids]
+                    mb_old_values = old_values[ids] if self.hyperparams.value_loss_clipping else None
                     mb_states = states[ids]
                     mb_actions = actions[ids]
                     mb_old_log_probs = prev_log_probs[ids]
@@ -278,12 +279,15 @@ class PPO2(Agent):
                 )
 
                 # Compute the value loss with clipping
-                predicted_values = self.critic(mb_states)
-                clipped_values = mb_old_values + (predicted_values - mb_old_values).clamp(-self.hyperparams.clipped_value_loss_eps, self.hyperparams.clipped_value_loss_eps)
-                loss_value1 = torch.square(predicted_values - mb_targets)
-                loss_value2 = torch.square(clipped_values - mb_targets)
-                loss_value = 0.5 * torch.max(loss_value1, loss_value2).mean()
-                # loss_value = F.mse_loss(self.critic(mb_states), mb_targets)
+                loss_value: torch.Tensor
+                if self.hyperparams.value_loss_clipping:
+                    predicted_values = self.critic(mb_states)
+                    clipped_values = mb_old_values + (predicted_values - mb_old_values).clamp(-self.hyperparams.clipped_value_loss_eps, self.hyperparams.clipped_value_loss_eps)
+                    loss_value1 = torch.square(predicted_values - mb_targets)
+                    loss_value2 = torch.square(clipped_values - mb_targets)
+                    loss_value = 0.5 * torch.max(loss_value1, loss_value2).mean()
+                else:
+                    loss_value = F.smooth_l1_loss(self.critic(mb_states), mb_targets)
 
                 if self.hyperparams.combined_optimizer:
                     # Combine the losses 
@@ -307,12 +311,14 @@ class PPO2(Agent):
                         total_entropy += entropy.mean().cpu()
                 
                 else:
+                    loss_policy_with_entropy_bonus = loss_policy - (self.hyperparams.entropy_coefficient * entropy)
+
                     # Optimize the models
-                    loss_policy.backward()
+                    loss_policy_with_entropy_bonus.backward()
                     loss_value.backward()
                     
-                    # clip_grad_norm_(self.optimizers["actor"].param_groups[0]['params'], self.max_grad_norm)
-                    # clip_grad_norm_(self.optimizers["critic"].param_groups[0]['params'], self.max_grad_norm)
+                    clip_grad_norm_(self.optimizers["actor"].param_groups[0]['params'], self.max_grad_norm)
+                    clip_grad_norm_(self.optimizers["critic"].param_groups[0]['params'], self.max_grad_norm)
                     
                     self.optimizers['actor'].step()
                     self.optimizers['critic'].step()
@@ -343,7 +349,7 @@ class PPO2(Agent):
             "Entropy": total_entropy,
             "Advantages" : advantages_all.mean(),
             "Train Rewards": rewards.mean(),
-            "Total Batch Rewards": rewards.sum()
+            "Total Batch Rewards": batch_rewards.sum()
         }
 
     def create_lr_lambda(self, initial_lr: float, final_lr: float, constant_steps: int, max_steps: int):

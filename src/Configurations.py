@@ -110,8 +110,9 @@ class PPO2Params(PPOParams):
                  value_loss_weight: float = .5, 
                  use_moving_average_reward: bool = True, 
                  reward_ema_coefficient: float = 0.99,
-                 clipped_value_loss_eps: float = 0.2,
                  combined_optimizer: bool = False,
+                 value_loss_clipping: bool = True,
+                 clipped_value_loss_eps: float = 0.2,
                  *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.gae_lambda = gae_lambda
@@ -121,8 +122,9 @@ class PPO2Params(PPOParams):
         self.value_loss_weight = value_loss_weight
         self.use_moving_average_reward = use_moving_average_reward
         self.reward_ema_coefficient = reward_ema_coefficient
-        self.clipped_value_loss_eps = clipped_value_loss_eps
         self.combined_optimizer = combined_optimizer
+        self.clipped_value_loss_eps = clipped_value_loss_eps
+        self.value_loss_clipping = value_loss_clipping
         self.agent_name = "PPO2"
 
 class Config(object):
