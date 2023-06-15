@@ -335,7 +335,8 @@ class PPO2(Agent):
                         total_entropy += entropy.mean().cpu()
 
         # Update the old critic network by copying the current critic network weights
-        self.old_critic.load_state_dict(self.critic.state_dict())
+        if self.hyperparams.value_loss_clipping:
+            self.old_critic.load_state_dict(self.critic.state_dict())
 
         # Compute average losses and entropy
         total_loss_actor /= (num_rounds * states.size(0) / mini_batch_size)
