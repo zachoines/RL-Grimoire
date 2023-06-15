@@ -482,5 +482,101 @@ class PPO2BraxHalfCheetahConfig(Config):
         )
 
 
+class PPO2BraxHalfCheetahConfig(Config):
+    def __init__(self):
+        self.max_episode_steps = 256
+        self.num_envs = 32
+
+        super().__init__(
+            PPO2Params(
+                clip = 0.2,
+                clipped_value_loss_eps = 0.2, # Used when value_loss_clipping is enabled
+                value_loss_clipping = False, 
+                gamma = 0.99,
+                policy_learning_rate = 2e-4,
+                value_learning_rate = 2.5e-3, # Deactivated when "combined_optimizer" enabled
+                entropy_coefficient = 0.1,
+                hidden_size = 256,
+                gae_lambda = 0.95,
+                value_loss_weight = 0.5, # Activated when "combined_optimizer" enabled
+                max_grad_norm = 1.0,
+                use_moving_average_reward = True,
+                combined_optimizer = False
+            ),
+            TrainerParams(
+                batch_transitions_by_env_trajectory = True, # Must be enabled for PPO
+                num_epochs = 2000,
+                batches_per_epoch = 1,
+                batch_size = 512,
+                updates_per_batch = 1,
+                shuffle_batches = False, # False to not interfere with GAE creation
+                save_location = "./saved_models/HalfCheetahPPO"
+            ),
+            EnvParams(
+                env_name = "brax-half-cheetah",
+                env_normalization=True,
+                num_envs = self.num_envs,
+                max_episode_steps = self.max_episode_steps,
+                vector_env=False, # Brax will init 'n' environments on its side
+                misc_arguments = {
+                    "batch_size": self.num_envs, # Brax's convention uses batch_size for num_environments
+                    "episode_length": self.max_episode_steps,
+                    "action_repeat": 1,
+                    "forward_reward_weight": 1.0,
+                    "ctrl_cost_weight": 0.1,
+                    "legacy_spring" : True,
+                    "exclude_current_positions_from_observation": False,
+                    "reset_noise_scale": 0.1,
+                }
+            )
+        )
+
+
+
+class PPO2HumanoidStandupConfig(Config):
+    def __init__(self):
+        self.max_episode_steps = 512
+        self.num_envs = 4
+
+        super().__init__(
+            PPO2Params(
+                clip = 0.2,
+                clipped_value_loss_eps = 0.2, # Used when value_loss_clipping is enabled
+                value_loss_clipping = False, 
+                gamma = 0.99,
+                policy_learning_rate = 1e-4,
+                value_learning_rate = 1e-3, # Deactivated when "combined_optimizer" enabled
+                entropy_coefficient = 0.2,
+                hidden_size = 512,
+                gae_lambda = 0.95,
+                value_loss_weight = 0.5, # Activated when "combined_optimizer" enabled
+                max_grad_norm = .5,
+                use_moving_average_reward = True,
+                combined_optimizer = False
+            ),
+            TrainerParams(
+                batch_transitions_by_env_trajectory = True, # Must be enabled for PPO
+                num_epochs = 2000,
+                batches_per_epoch = 1,
+                batch_size = 10240,
+                updates_per_batch = 1,
+                shuffle_batches = False, # False to not interfere with GAE creation
+                save_location = "./saved_models/HumanoidStandupPPO2"
+            ),
+            EnvParams(
+                env_name = "brax-humanoid-standup",
+                env_normalization=True,
+                num_envs = self.num_envs,
+                max_episode_steps = self.max_episode_steps,
+                vector_env=False, # Brax will init 'n' environments on its side
+                misc_arguments = {
+                    "batch_size": self.num_envs, # Brax's convention uses batch_size for num_environments
+                    "episode_length": self.max_episode_steps,
+                    "action_repeat": 1,
+                    "episode_length": 1024,
+                    "legacy_spring": False
+                }
+            )
+        )
 
 

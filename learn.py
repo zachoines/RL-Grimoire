@@ -25,6 +25,17 @@ parser.add_argument('-c', '--config', type=str, help='Train configuration class'
 
 # Register environments here
 gym.register(
+    id="brax-humanoid-standup",
+    entry_point="src.brax_to_gymnasium:convert_brax_to_gym",
+    kwargs={
+        "name": "humanoidstandup",
+        "episode_length": 1024,
+        "action_repeat": 1,
+        "legacy_spring": False
+    }
+)
+
+gym.register(
     id="brax-ant",
     entry_point="src.brax_to_gymnasium:convert_brax_to_gym",
     kwargs={

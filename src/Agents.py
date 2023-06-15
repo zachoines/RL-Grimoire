@@ -3,9 +3,9 @@ import numpy as np
 
 # Torch imports
 import torch
-from typing import Dict, Union
+from typing import Dict
 from torch import Tensor
-from torch.optim import Optimizer, AdamW, Adam 
+from torch.optim import Optimizer, AdamW
 from torch.distributions import Normal
 import torch.nn.functional as F
 import torch.optim.lr_scheduler as lr_scheduler
@@ -102,7 +102,7 @@ class PPO2(Agent):
             self.actor = GaussianGradientPolicy(
                 self.state_size, 
                 self.num_actions, 
-                256,
+                self.hidden_size,
                 device=device
             )
             self.critic = ValueNetwork(
@@ -171,11 +171,11 @@ class PPO2(Agent):
             last_gae_lam = delta + (gamma * lambda_ * non_terminal * last_gae_lam)
             advantages[:, t] = last_gae_lam * non_terminal
 
-        # Compute bootstrapped targets by adding unnormalized advantages to values
-        # advantages = self.advantage_normalizer.update(advantages)
+        # Compute bootstrapped targets by adding unnormalized advantages to values 
         targets = values + advantages
 
         # Normalize the advantages for the policy update
+        advantages = self.advantage_normalizer.update(advantages)
         # advantages = (advantages - advantages.mean()) / (advantages.std() + self.eps)
 
         return targets, advantages
