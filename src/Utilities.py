@@ -58,12 +58,12 @@ def to_tensor(x: Union[np.ndarray, torch.Tensor, int, float, List], device=torch
         raise ValueError("Unsupported data type. Only NumPy arrays, PyTorch tensors, primitives, and lists are supported.")
     return x
 
-class RewardNormalizer:
+class Normalizer:
 
     """
-    The RewardNormalizer adapts to the changing distribution of rewards by using the Adam 
+    The Normalizer class adapts to the changing distribution of input data by using the Adam 
     running average calculation. It updates the running mean and variance based on the 
-    incoming rewards, allowing it to respond to changes in the reward distribution over time.
+    incoming data, allowing it to respond to changes in the data distribution over time.
     """
 
     def __init__(self, beta1: float = 0.9, beta2: float = 0.999, eps: float = 1e-8):
@@ -74,20 +74,23 @@ class RewardNormalizer:
         self.v = 0  # Running variance initialization
         self.t = 0  # Timestep initialization
 
-    def update(self, rewards: torch.Tensor) -> torch.Tensor:
+    def update(self, data: torch.Tensor) -> torch.Tensor:
         """
-        Update the running mean and variance using rewards and normalize rewards.
+        Update the running mean and variance using data and normalize data.
 
-        :param rewards: Tensor of rewards with shape (num_envs, num_steps, 1).
-        :return: Normalized rewards with the same shape as input.
+        :param data: Tensor of data with any shape.
+        :return: Normalized data with the same shape as input.
         """
-        self.t += 1  # Increment timestep
-        self.m = self.beta1 * self.m + (1 - self.beta1) * torch.mean(rewards)  # Update running mean
-        self.v = self.beta2 * self.v + (1 - self.beta2) * torch.var(rewards, unbiased=False)  # Update running variance
+        
+        data_flattened = data.view(-1)  # Flatten the data tensor
+        batch_size = data_flattened.shape[0]
+        self.t += batch_size  # Increment timestep by batch size
+        self.m = self.beta1 * self.m + (1 - self.beta1) * data_flattened.mean()  # Update running mean
+        self.v = self.beta2 * self.v + (1 - self.beta2) * data_flattened.var(unbiased=False)  # Update running variance
         m_hat = self.m / (1 - self.beta1 ** self.t)  # Bias-corrected mean estimate
         v_hat = self.v / (1 - self.beta2 ** self.t)  # Bias-corrected variance estimate
-        rewards_norm = (rewards - m_hat) / (torch.sqrt(v_hat) + self.eps)  # Normalize rewards
-        return rewards_norm
+        data_norm = (data - m_hat) / (torch.sqrt(v_hat) + self.eps)  # Normalize data
+        return data_norm
 
 
 class RunningMeanStd:
@@ -99,6 +102,10 @@ class RunningMeanStd:
         self.device = device
 
     def update(self, x: torch.Tensor):
+        batch_count = x.shape[0]
+        if batch_count == 1:
+            return x
+        
         batch_mean = torch.mean(x, dim=0)
         batch_var = torch.var(x, dim=0)
         batch_count = x.shape[0]
@@ -112,6 +119,8 @@ class RunningMeanStd:
         M2 = m_a + m_b + torch.square(delta) * self.count * batch_count / tot_count
         self.var = M2 / tot_count
         self.count = tot_count
+
+        return ((x - self.mean) / torch.sqrt(self.var + 1e-8)).to(self.device)
 
     def normalize(self, x: torch.Tensor) -> torch.Tensor:
         return ((x - self.mean) / torch.sqrt(self.var + 1e-8)).to(self.device)

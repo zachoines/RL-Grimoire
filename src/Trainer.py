@@ -1,10 +1,8 @@
 import numpy as np
 import gymnasium as gym
-import importlib
 from typing import List, Dict
 
 # Torch imports
-import torch.optim.lr_scheduler as lr_scheduler
 from torch.utils.tensorboard.writer import SummaryWriter
 import torch
 from torch import Tensor
@@ -14,6 +12,7 @@ from Utilities import RunningMeanStd, to_tensor
 from Agents import Agent
 from Datasets import ExperienceBuffer, Transition
 from Configurations import TrainerParams, EnvParams
+from Utilities import Normalizer
 
 class Trainer:
     def __init__(self,
@@ -45,11 +44,6 @@ class Trainer:
         self.action_max = float(self.env.action_space.high_repr) # type: ignore
 
         self.reset()
-        self.learning_rate_schedulers = {}
-        for name, optimizer in self.agent.optimizers.items():
-            if "scheduler" in name:
-                self.learning_rate_schedulers[name] = optimizer
-
 
     def reduce_dicts_to_avg(self, list_of_dicts: List[Dict[str, torch.Tensor]]) -> Dict[str, torch.Tensor]:
         result_dict: Dict[str, torch.Tensor] = {}
@@ -92,10 +86,6 @@ class Trainer:
         for metric, value in train_results.items():
             self.writer.add_scalar(tag=metric, scalar_value=value, global_step=self.current_update)
 
-        for name, scheduler in self.learning_rate_schedulers.items():
-            [value] = scheduler.get_last_lr()
-            self.writer.add_scalar(tag=name + " learning rate scheduler", scalar_value=value, global_step=self.current_update)
-
     def save_model(self)->None:
         self.agent.save(self.save_location)
         self.agent.save(self.save_location + str(self.current_epoch))
@@ -106,7 +96,7 @@ class Trainer:
     def reset(self):
         self.state, _ = self.env.reset()
         if self.env_params.env_normalization:
-            self.state = self.normalizer.normalize(self.state)
+            self.state = self.normalizer.update(to_tensor(self.state, device=self.device))
 
     def step(self):
         
@@ -133,7 +123,7 @@ class Trainer:
             self.state = to_tensor(self.state, device=self.device)
 
             if self.env_params.env_normalization:
-                next_state = self.normalizer.normalize(next_state)
+                next_state = self.normalizer.update(next_state)
             
             self.writer.add_scalar(tag="Step Rewards", scalar_value=reward.mean(), global_step=self.current_step) # type: ignore
             

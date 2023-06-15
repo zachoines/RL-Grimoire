@@ -107,6 +107,7 @@ gym.register(
 )
 
 if __name__ == "__main__":
+    
     # Misc setup
     set_random_seeds()
     clear_directories()  # TODO Make this a command line argument.
@@ -130,12 +131,10 @@ if __name__ == "__main__":
             id = config.env_params.env_name, 
             num_envs=config.env_params.num_envs,
             wrappers=[
-                lambda env, env_id=i: RecordVideoWrapper(env, recording_length=512, enabled=(True)) if env_id==0 else env for i in range(config.env_params.num_envs)
+                lambda env, env_id=i: RecordVideoWrapper(env, recording_length=2048, enabled=(True)) if env_id==0 else env for i in range(config.env_params.num_envs)
             ],
             **config.env_params.misc_arguments
         )
-    # env = NormalizeReward(env)
-    # env = NormalizeObservation(env)
 
     # Load agent
     agent_class_ = getattr(importlib.import_module("src.Agents"), config.agent_params.agent_name)
@@ -143,15 +142,6 @@ if __name__ == "__main__":
 
     # Run a few random batches to generate normalization parameters
     running_mean_std_recorder = RunningMeanStd(shape=env.observation_space.shape, device=device)
-    if config.env_params.env_normalization:
-        state, _ = env.reset()
-        with torch.no_grad():
-            for _ in range(512):
-                action = env.unwrapped.action_space.sample()
-                next_state, _, _, _, _ = env.step(action)
-                running_mean_std_recorder.update(next_state)
-                state = next_state  
-        running_mean_std_recorder.save(loc=config.trainer_params.save_location + "NormStates")
     
     # Train agent
     trainer = Trainer(
@@ -163,6 +153,7 @@ if __name__ == "__main__":
         normalizer=running_mean_std_recorder,
         device=device
     )
+    running_mean_std_recorder.save(loc=config.trainer_params.save_location + "NormStates")
     pbar = tqdm(total=config.trainer_params.num_epochs)
     for epoch in trainer:
         pbar.update(1)

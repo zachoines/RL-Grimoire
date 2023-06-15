@@ -17,7 +17,7 @@ from Datasets import Transition
 from Configurations import *
 from Policies import *
 from Networks import *
-from Utilities import to_tensor, RewardNormalizer
+from Utilities import to_tensor, Normalizer
 
 class Agent:
     def __init__(
@@ -125,8 +125,8 @@ class PPO2(Agent):
         self.optimizers = self.get_optimizers()
         self.update_count = 0
 
-        self.reward_normalizer = RewardNormalizer()
-        self.advantage_normalizer = RewardNormalizer()
+        self.reward_normalizer = Normalizer()
+        self.advantage_normalizer = Normalizer()
 
     def get_actions(self, state: torch.Tensor, eval=False)->tuple[Tensor, Tensor]:
         if self.is_continous():
@@ -141,50 +141,7 @@ class PPO2(Agent):
             return action, normal.log_prob(action).sum(dim=-1)
         else:
             raise NotImplementedError
-        
-    def compute_gae_and_targets_truncated_time_horizon(self, rewards, dones, truncs, values, next_values, batch_size, time_horizon, gamma=0.99, lambda_=0.95):
-
-        """
-            Wraps compute_gae_and_targets() method. Mean't to compute targets and adantages when batch sizes are very large.
-            This prevents advantages from exploding in size. Say if you have a single environment with 
-            a batch size of 2048,  then this function will chunk that batch into several "time_horizon" sized mini-batches, 
-            computing GAE on each of those mini-batches. These are then concatenated and returned. This 
-        """
-
-        # Split batch into smaller batches
-        num_mini_batches = batch_size // time_horizon
-        targets_all = []
-        advantages_all = []
-        
-        for i in range(num_mini_batches):
-            start = i * time_horizon
-            end = (i + 1) * time_horizon
-            mb_rewards = rewards[:, start:end]
-            mb_dones = dones[:, start:end]
-            mb_truncs = truncs[:, start:end]
-            mb_values = values[:, start:end]
-            mb_next_values = next_values[:, start:end]
-            
-            targets, advantages = self.compute_gae_and_targets(
-                mb_rewards, 
-                mb_dones, 
-                mb_truncs, 
-                mb_values, 
-                mb_next_values,
-                time_horizon, 
-                gamma,
-                lambda_
-            )
-            
-            targets_all.append(targets)
-            advantages_all.append(advantages)
-
-        targets_all = torch.cat(targets_all, dim=1)
-        advantages_all = torch.cat(advantages_all, dim=1)
-
-        return targets_all, advantages_all
-
-        
+          
     def compute_gae_and_targets(self, rewards, dones, truncs, values, next_values, batch_size, gamma=0.99, lambda_=0.95):
         """
         Compute GAE and bootstrapped targets for PPO.
@@ -224,7 +181,14 @@ class PPO2(Agent):
         return targets, advantages
     
 
-    def learn(self, batch: list[Transition], num_envs: int, batch_size: int, num_rounds: int = 4, mini_batch_size: int = 64) -> dict[str, Tensor]:
+    def clipped_value_loss(self, targets: torch.Tensor, values: torch.Tensor) -> torch.Tensor:
+        assert targets.shape == values.shape
+        loss_unclipped = (values - targets) ** 2
+        clipped_value = targets + (values - targets).clamp(-self.hyperparams.clipped_value_loss_eps, self.hyperparams.clipped_value_loss_eps)
+        loss_clipped = (clipped_value - targets) ** 2
+        return .5 * torch.max(loss_unclipped, loss_clipped).mean()
+
+    def learn(self, batch: list[Transition], num_envs: int, batch_size: int, num_rounds: int = 8, mini_batch_size: int = 256) -> dict[str, Tensor]:
         self.update_count += 1
 
         # Reshape batch to gathered lists
@@ -247,7 +211,7 @@ class PPO2(Agent):
         with torch.no_grad():
             values = self.critic(states)
             next_values = self.critic(next_states)
-            # old_values = self.old_critic(next_states)
+            old_values = self.old_critic(next_states)
 
             # Calculate advantages with GAE
             targets, advantages_all = self.compute_gae_and_targets(
@@ -264,7 +228,7 @@ class PPO2(Agent):
         # Flatten states, actions, log probabilities, advantages, and targets
         states = states.view(-1, states.size(-1))
         values = values.view(-1)
-        # old_values = old_values.view(-1)
+        old_values = old_values.view(-1)
         prev_log_probs = prev_log_probs.view(-1)
         advantages_all = advantages_all.view(-1)
         actions = actions.view(-1, actions.size(-1))
@@ -289,7 +253,7 @@ class PPO2(Agent):
 
                 # Extract mini-batch data
                 with torch.no_grad():
-                    # mb_old_values = old_values[ids]
+                    mb_old_values = old_values[ids]
                     mb_states = states[ids]
                     mb_actions = actions[ids]
                     mb_old_log_probs = prev_log_probs[ids]
@@ -314,12 +278,12 @@ class PPO2(Agent):
                 )
 
                 # Compute the value loss with clipping
-                # predicted_values = self.critic(mb_states)
-                # clipped_values = mb_old_values + (predicted_values - mb_old_values).clamp(-self.hyperparams.clipped_value_loss_eps, self.hyperparams.clipped_value_loss_eps)
-                # loss_value1 = torch.square(predicted_values - mb_targets)
-                # loss_value2 = torch.square(clipped_values - mb_targets)
-                # loss_value = 0.5 * torch.max(loss_value1, loss_value2).mean()
-                loss_value = F.smooth_l1_loss(self.critic(mb_states), mb_targets)
+                predicted_values = self.critic(mb_states)
+                clipped_values = mb_old_values + (predicted_values - mb_old_values).clamp(-self.hyperparams.clipped_value_loss_eps, self.hyperparams.clipped_value_loss_eps)
+                loss_value1 = torch.square(predicted_values - mb_targets)
+                loss_value2 = torch.square(clipped_values - mb_targets)
+                loss_value = 0.5 * torch.max(loss_value1, loss_value2).mean()
+                # loss_value = F.mse_loss(self.critic(mb_states), mb_targets)
 
                 if self.hyperparams.combined_optimizer:
                     # Combine the losses 
@@ -365,8 +329,7 @@ class PPO2(Agent):
                         total_entropy += entropy.mean().cpu()
 
         # Update the old critic network by copying the current critic network weights
-        # if self.update_count % 5 == 0:
-        #     self.old_critic.load_state_dict(self.critic.state_dict())
+        self.old_critic.load_state_dict(self.critic.state_dict())
 
         # Compute average losses and entropy
         total_loss_actor /= (num_rounds * states.size(0) / mini_batch_size)
