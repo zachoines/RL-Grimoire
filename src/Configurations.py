@@ -37,15 +37,11 @@ class AgentParams(object):
 
 class TrainerParams(object):
     def __init__(self,
-            learningRateScheduler: bool = False,
-            learningRateSchedulerClass: str = "ExponentialLR", # Valid names: ['LambdaLR', 'MultiplicativeLR', 'StepLR', 'MultiStepLR', 'ConstantLR', 'LinearLR', 'ExponentialLR', 'SequentialLR', 'CosineAnnealingLR', 'ChainedScheduler', 'ReduceLROnPlateau', 'CyclicLR', 'CosineAnnealingWarmRestarts', 'OneCycleLR', 'PolynomialLR', 'LRScheduler']
-            learningRateScheduleArgs: Dict[str, object] = { "gamma": 0.99 },
             replay_buffer_max_size: int = 1000000,
             replay_buffer_min_size: int = -1,
             replay_buffer_remove_on_sample: bool = True, # Remove experiances after sampling
             replay_buffer_shuffle_experiances: bool = False, # Shuffle experiances BEFORE sampling
             batch_transitions_by_env_trajectory: bool = False, # Some on-policy algorithms need to preserve this, rather than just random sampling. Needed when calculating returns for per env.
-            on_policy_training: bool = True, # In short: Trains only on recently collected experiances, replay buffer doesn't store experiences.
             num_epochs: int = 1, 
             batches_per_epoch: int = 1, # How many batches to collect each epoch
             batch_size: int = 512,  # Size of training batch
@@ -57,18 +53,12 @@ class TrainerParams(object):
             save_model_frequency: int = 1 # Save model after so meny epochs
         ):
 
-        # Schedulers
-        self.learningRateScheduler = learningRateScheduler
-        self.learningRateSchedulerClass = learningRateSchedulerClass
-        self.learningRateScheduleArgs = learningRateScheduleArgs
-
         # Replay buff settings
         self.replay_buffer_max_size = replay_buffer_max_size
         self.replay_buffer_min_size = replay_buffer_min_size
         self.replay_buffer_remove_on_sample = replay_buffer_remove_on_sample
         self.replay_buffer_shuffle_experiances = replay_buffer_shuffle_experiances
         self.batch_transitions_by_env_trajectory = batch_transitions_by_env_trajectory
-        self.on_policy_training = on_policy_training 
 
         # Training Params
         self.num_epochs = num_epochs
@@ -126,6 +116,12 @@ class PPO2Params(PPOParams):
         self.clipped_value_loss_eps = clipped_value_loss_eps
         self.value_loss_clipping = value_loss_clipping
         self.agent_name = "PPO2"
+
+class PPO2RecurrentParams(PPO2Params):
+    def __init__(self, 
+                 *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.agent_name = "PPO2Recurrent"
 
 class Config(object):
     def __init__(self, agent_params, trainer_params: TrainerParams=TrainerParams(), env_params: EnvParams=EnvParams()):

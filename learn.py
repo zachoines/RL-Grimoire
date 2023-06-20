@@ -25,6 +25,22 @@ parser.add_argument('-c', '--config', type=str, help='Train configuration class'
 
 # Register environments here
 gym.register(
+    id="brax-swimmer",
+    entry_point="src.brax_to_gymnasium:convert_brax_to_gym",
+    kwargs={
+        "name": "swimmer",
+        "episode_length": 1024,
+        "action_repeat": 1,
+        "forward_reward_weight": 1.0,
+        "ctrl_cost_weight": 1e-4,
+        "reset_noise_scale": 0.1,
+        "exclude_current_positions_from_observation": True,
+        "legacy_reward": False,
+        "legacy_spring": False,
+    }
+)
+
+gym.register(
     id="brax-humanoid-standup",
     entry_point="src.brax_to_gymnasium:convert_brax_to_gym",
     kwargs={
@@ -64,6 +80,7 @@ gym.register(
         "reset_noise_scale": 5e-3,
         "exclude_current_positions_from_observation": True,
         "action_repeat": 1,
+        "legacy_spring": False,
         "healthy_z_range": (.7, float('inf'))
     }
 )
@@ -164,9 +181,10 @@ if __name__ == "__main__":
         normalizer=running_mean_std_recorder,
         device=device
     )
-    running_mean_std_recorder.save(loc=config.trainer_params.save_location + "NormStates")
+    
     pbar = tqdm(total=config.trainer_params.num_epochs)
     for epoch in trainer:
+        running_mean_std_recorder.save(loc=config.trainer_params.save_location + "NormStates")
         pbar.update(1)
 
     pbar.close()

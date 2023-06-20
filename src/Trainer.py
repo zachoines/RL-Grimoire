@@ -12,7 +12,6 @@ from Utilities import RunningMeanStd, to_tensor
 from Agents import Agent
 from Datasets import ExperienceBuffer, Transition
 from Configurations import TrainerParams, EnvParams
-from Utilities import Normalizer
 
 class Trainer:
     def __init__(self,
@@ -21,7 +20,7 @@ class Trainer:
         train_params: TrainerParams,
         env_params: EnvParams,
         save_location: str,
-        normalizer: RunningMeanStd = RunningMeanStd(),
+        normalizer: RunningMeanStd,
         device = torch.device("cpu")
     ):
                 
@@ -33,7 +32,6 @@ class Trainer:
         self.current_epoch = 0
         self.current_update = 0
         self.current_step = 0
-        self.optimizers = {}
         self.save_location = save_location
         self.writer = SummaryWriter()
         self.normalizer = normalizer
@@ -76,9 +74,6 @@ class Trainer:
             if self.train_params.shuffle_batches:
                 np.random.shuffle(batch)
             train_results.append(self.agent.learn(batch, self.env_params.num_envs, self.train_params.batch_size))
-
-        if self.train_params.on_policy_training:
-            self.exp_buffer.empty()
         
         return self.reduce_dicts_to_avg(train_results)
 
@@ -95,6 +90,7 @@ class Trainer:
     
     def reset(self):
         self.state, _ = self.env.reset()
+        self.dones = torch.zeros(self.env_params.num_envs).to(self.device)
         if self.env_params.env_normalization:
             self.state = self.normalizer.update(to_tensor(self.state, device=self.device))
 
@@ -105,10 +101,11 @@ class Trainer:
         
         with torch.no_grad():
             self.current_step += 1
+
             if self.state.__class__ == np.ndarray:
                 self.state = to_tensor(self.state, device=self.device)
-            action, other = self.agent.get_actions(self.state)
-            other = other.cpu()
+            
+            action, other = self.agent.get_actions(self.state, self.dones)
             action = action.cpu()
             action = self.train_params.preprocess_action(action)
             next_state, reward, done, trunc, _ = self.env.step(action)
@@ -118,10 +115,10 @@ class Trainer:
             action = to_tensor(action, device=self.device)
             next_state = to_tensor(next_state, device=self.device)
             reward = to_tensor(reward, device=self.device)
-            done = to_tensor(done, device=self.device)
+            self.dones = done = to_tensor(done, device=self.device)
             trunc = to_tensor(trunc, device=self.device)
             self.state = to_tensor(self.state, device=self.device)
-
+    
             if self.env_params.env_normalization:
                 next_state = self.normalizer.update(next_state)
             
@@ -132,6 +129,7 @@ class Trainer:
             else:
                 self.exp_buffer.append([Transition(s, a, n_s, r, d, t, o) for s, a, n_s, r, d, t, o in zip(self.state, action, next_state, reward, done, trunc, other)]) # type: ignore
             self.state = next_state
+
 
     def __next__(self):
 

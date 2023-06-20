@@ -7,8 +7,8 @@ import random
 from typing import Any, Union, List
 
 def clear_directories():
-    directories = ['videos', 'saved_models']
-    # directories = ['videos', 'runs', 'saved_models']
+    # directories = ['videos', 'saved_models']
+    directories = ['videos', 'runs', 'saved_models']
 
     for directory in directories:
         for root, _, files in os.walk(directory):
@@ -27,7 +27,6 @@ def clear_directories():
                     pass
 
     print("Directories cleared successfully.")
-
 
 def set_random_seeds(seed=42):
    os.environ['PYTHONHASHSEED']=str(seed)

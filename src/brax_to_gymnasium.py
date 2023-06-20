@@ -3,6 +3,7 @@ import jax
 import numpy as np
 import cv2
 import os
+from collections import deque
 
 import gymnasium as gym
 from gymnasium import spaces
@@ -14,7 +15,7 @@ from brax.v1 import jumpy as jp
 import brax.v1.envs as envs
 from datetime import datetime
 
-def convert_brax_to_gym(name: str, **kwargs):
+def convert_brax_to_gym(name: str, frame_stack: bool = True, stack_size: int = 16, **kwargs):
     device = torch.device(
         "mps" if torch.has_mps else "cpu" or # MACOS
         "cuda" if torch.has_cuda else 
@@ -35,7 +36,52 @@ def convert_brax_to_gym(name: str, **kwargs):
         recording_save_frequeny = 512
     )
     env = JaxToTorchWrapper(env, device)
+
+    if frame_stack:
+       env = BraxFrameStack(env, stack_size, device=device)  # Add this line
+
     return env
+
+class BraxFrameStack(gym.Wrapper):
+    def __init__(self, env: gym.Env, stack_size: int, device: torch.device = torch.device("cpu")):
+        super().__init__(env)
+        self.stack_size = stack_size  # Number of frames to stack
+        self.num_envs = env.num_envs  # Number of environments
+        self.device = device  # Device to use for computations
+
+        # Initialize a deque for each environment to store the frames
+        self.frames = [deque([torch.zeros(self.env.observation_space.shape[-1], dtype=torch.float32).to(self.device) for _ in range(self.stack_size)], maxlen=stack_size) for _ in range(self.num_envs)]
+        
+        # Modify the observation space to account for the frame stacking
+        self.observation_space = gym.spaces.Box(
+            low=-np.inf, 
+            high=np.inf, 
+            shape=(self.num_envs, self.stack_size * self.env.observation_space.shape[-1]), 
+            dtype=np.float32
+        )
+
+    def reset(self):
+        obs, info = self.env.reset()  # Reset the environment
+        # Reset the frame deque for each environment
+        for i in range(self.num_envs):
+            self.frames[i] = deque([torch.zeros(self.env.observation_space.shape[-1], dtype=torch.float32).to(self.device) for _ in range(self.stack_size)], maxlen=self.stack_size)
+            self.frames[i].append(obs[i, :].to(self.device))  # Append the initial observation to the deque
+        return self.get_obs(), info  # Return the stacked frames and the info
+
+    def step(self, action):
+        obs, reward, done, truncs, info = self.env.step(action)  # Step the environment with the action
+        # If the episode is done or truncated, reset the frame deque
+        # Otherwise, append the new observation to the deque
+        for i in range(self.num_envs):
+            if done[i] or truncs[i]:
+                self.frames[i] = deque([torch.zeros(self.env.observation_space.shape[-1], dtype=torch.float32).to(self.device) for _ in range(self.stack_size)], maxlen=self.stack_size)
+            self.frames[i].append(obs[i, :].to(self.device))
+        return self.get_obs(), reward, done, truncs, info  # Return the stacked frames, reward, done flag, truncations, and info
+
+    def get_obs(self):
+        # Stack the frames together and flatten the last two dimensions
+        obs = torch.stack([torch.stack(list(frame)) for frame in self.frames]).view(self.num_envs, -1)
+        return obs
 
 class GymWrapper(gym.Env):
 
@@ -98,7 +144,6 @@ class GymWrapper(gym.Env):
     else:
       raise NotImplementedError
       # return super().render(mode=mode)  # just raise an exception
-
 
 class VectorGymWrapper(gym.vector.VectorEnv):
   """A wrapper that converts batched Brax Env to one that follows Gym VectorEnv API."""
@@ -225,7 +270,6 @@ class VectorGymWrapper(gym.vector.VectorEnv):
     else:
       cv2.imshow('Frame', image.render_array(sys, qp, 256, 256))
       cv2.waitKey(1)
-
 
 class JaxToTorchWrapper(gym.Wrapper):
 
