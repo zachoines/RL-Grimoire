@@ -259,27 +259,27 @@ class PPO2ReacherConfig(Config):
 class PPO2SwimmerConfig(Config):
     def __init__(self):
         self.max_episode_steps = 256
-        self.num_envs = 1
+        self.num_envs = 8
         super().__init__(
             PPO2Params(
-                clip = 0.3,
+                clip = 0.2,
                 gamma = 0.99,
                 policy_learning_rate = 3e-4,
                 value_learning_rate = 3e-4, # Deactivated when "combined_optimizer" enabled
-                entropy_coefficient = 0.1,
+                entropy_coefficient = 0.2,
                 hidden_size = 256,
                 gae_lambda = 0.95,
                 clipped_value_loss_eps = 0.2,
                 value_loss_weight = 0.5, # Activated when "combined_optimizer" enabled
                 max_grad_norm = .5,
-                use_moving_average_reward = False,
-                combined_optimizer = True
+                use_moving_average_reward = True,
+                combined_optimizer = False
             ),
             TrainerParams(
                 batch_transitions_by_env_trajectory = True, # Must be enabled for PPO
                 num_epochs = 2000,
                 batches_per_epoch = 1,
-                batch_size = 256,
+                batch_size = 32,
                 updates_per_batch = 1,
                 shuffle_batches = False, # False to not interfere with GAE creation
                 save_location = "./saved_models/SwimmerPPO2",
@@ -343,7 +343,7 @@ class PPO2HalfCheetahConfig(Config):
 class PPO2BraxHalfCheetahConfig(Config):
     def __init__(self):
         self.max_episode_steps = 256
-        self.num_envs = 16
+        self.num_envs = 2
 
         super().__init__(
             PPO2Params(
@@ -365,7 +365,7 @@ class PPO2BraxHalfCheetahConfig(Config):
                 batch_transitions_by_env_trajectory = True, # Must be enabled for PPO
                 num_epochs = 2000,
                 batches_per_epoch = 1,
-                batch_size = 512,
+                batch_size = 16,
                 updates_per_batch = 1,
                 shuffle_batches = False, # False to not interfere with GAE creation
                 save_location = "./saved_models/HalfCheetahPPO"
@@ -388,7 +388,6 @@ class PPO2BraxHalfCheetahConfig(Config):
                 }
             )
         )
-
 
 class PPO2BraxHalfCheetahRecurrentConfig(Config):
     def __init__(self):
@@ -536,7 +535,7 @@ class PPO2HumanoidStandupConfig(Config):
 class PPO2BraxHopperConfig(Config):
     def __init__(self):
         self.max_episode_steps = 1024
-        self.num_envs = 8
+        self.num_envs = 32
 
         super().__init__(
             PPO2Params(
@@ -558,7 +557,7 @@ class PPO2BraxHopperConfig(Config):
                 batch_transitions_by_env_trajectory = True, # Must be enabled for PPO
                 num_epochs = 2000,
                 batches_per_epoch = 1,
-                batch_size = 128,
+                batch_size = 512,
                 updates_per_batch = 1,
                 shuffle_batches = False, # False to not interfere with GAE creation
                 save_location = "./saved_models/BraxHopperPPO2"
@@ -584,7 +583,7 @@ class PPO2BraxHopperConfig(Config):
 class PPO2BraxAntConfig(Config):
     def __init__(self):
         self.max_episode_steps = 256
-        self.num_envs = 32
+        self.num_envs = 3
 
         super().__init__(
             PPO2Params(
@@ -606,7 +605,7 @@ class PPO2BraxAntConfig(Config):
                 batch_transitions_by_env_trajectory = True, # Must be enabled for PPO
                 num_epochs = 2000,
                 batches_per_epoch = 1,
-                batch_size = 512,
+                batch_size = 32,
                 updates_per_batch = 1,
                 shuffle_batches = False,
                 save_location = "./saved_models/AntPPO"

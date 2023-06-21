@@ -111,12 +111,12 @@ class ValueNetworkResidual(nn.Module):
 
 class ValueNetworkTransformer(nn.Module):
     def __init__(
-        self,
-        in_features: int,
-        hidden_size: int,
-        stack_size: int = 16,
-        num_layers: int = 8,
-        nhead: int = 4,
+        self, 
+        in_features: int, 
+        hidden_size: int, 
+        stack_size: int = 16, 
+        num_layers: int = 4, 
+        nhead: int = 2, 
         device: torch.device = torch.device("cpu")
     ):
         super().__init__()
@@ -125,76 +125,91 @@ class ValueNetworkTransformer(nn.Module):
         self.stack_size = stack_size
         self.hidden_size = hidden_size
         self.state_size = self.in_features // self.stack_size
+        self.device = device
 
-        # Embedding layer to map the state to an embedding dimension
+        # Embedding layer for older states
         self.embedding = nn.Linear(self.state_size, hidden_size).to(device)
 
-        # Shared transformer encoder network
-        self.shared_net = nn.Transformer(
-            d_model=hidden_size,
-            nhead=nhead,
-            num_encoder_layers=num_layers,
-            batch_first=True
+        # Transformer encoder layers
+        encoder_layers = nn.TransformerEncoderLayer(d_model=hidden_size, nhead=nhead, batch_first=True).to(device)
+        self.transformer_encoder = nn.TransformerEncoder(encoder_layers, num_layers).to(device)
+
+        # Linear layer for recent state
+        self.linear = nn.Linear(self.state_size, hidden_size).to(device)
+
+        # Value network
+        self.value_net = nn.Sequential(
+            nn.Linear(hidden_size * 2, hidden_size),
+            nn.LeakyReLU(),
+            nn.Linear(hidden_size, hidden_size),
+            nn.LeakyReLU(),
+            nn.Linear(hidden_size, 1)
         ).to(device)
 
-        # Linear layer for value computation
-        self.linear = nn.Linear(hidden_size, 1).to(device)
-
         self.apply(self.init_weights)
-        self.device = device
+        self.to(self.device)
 
     def init_weights(self, m):
         if type(m) == nn.Linear:
             nn.init.kaiming_normal_(m.weight, a=0.01)
+            m.weight.data *= 0.1
             m.bias.data.fill_(0.0)
 
-    def forward(self, state: torch.Tensor) -> torch.Tensor:
+    def forward(self, state: torch.Tensor):
         """
         Forward pass of the value network.
 
         Args:
-            state (torch.Tensor): Input state tensor of shape (num_envs, state_size * stack_size).
+            state (torch.Tensor): Input state tensor of shape (num_envs, num_samples, stack_size * state_size).
 
         Returns:
-            torch.Tensor: Value tensor of shape (num_envs,).
+            torch.Tensor: Value predictions tensor of shape (num_envs * num_samples, 1).
         """
-
         if len(state.size()) == 2:
-            state = state.unsqueeze(1)  # Add a singleton dimension for num_samples
+            state = state.unsqueeze(1)
 
         num_envs, num_samples, _ = state.size()
 
-        # Reshape the state to (num_envs, stack_size, state_size)
-        state = state.reshape((num_envs, num_samples, self.stack_size, self.state_size)).to(self.device)
+        # Reshape the state tensor to separate the states in the stack
+        state = state.reshape(num_envs * num_samples, self.stack_size, self.state_size)
+        recent_state, older_states = state[:, -1, :], state[:, :-1, :]
 
-        # Pass the state through the embedding layer
-        embedded_state = F.leaky_relu(self.embedding(state))
+        # Flatten the older states back into 2D form for the embedding layer
+        older_states = older_states.reshape(num_envs * num_samples * (self.stack_size - 1), self.state_size)
+        older_states = older_states.to(self.device)
+        recent_state = recent_state.to(self.device)
 
-        # Reshape the embedded state to (num_envs * num_samples, stack_size, hidden_size)
-        embedded_state = embedded_state.reshape((num_envs * num_samples, self.stack_size, self.hidden_size))
+        # Create a mask to ignore zero-padded states in the transformer encoder
+        non_zero_mask = torch.all(older_states == 0, dim=-1)
+        mask = non_zero_mask.reshape(num_envs * num_samples, self.stack_size - 1)
 
-        # Split the computation into smaller chunks
-        chunk_size = 1024
-        chunks = torch.split(embedded_state, chunk_size, dim=0)
-        outputs = []
-        for chunk in chunks:
-            result = self.shared_net(chunk, chunk)
-            outputs.append(result)
+        # Embed the older states and reshape them back into sequence form
+        embedded_states = self.embedding(older_states)
+        embedded_states = embedded_states.reshape(num_envs * num_samples, self.stack_size - 1, self.hidden_size)
 
-        # Combine the outputs from all chunks
-        shared_features = torch.cat(outputs, dim=0)
+        # Create the key_padding_mask by inverting the mask and converting it to a byte tensor
+        key_padding_mask = mask.to(torch.bool).to(self.device)
 
-        # Reshape back to (num_envs, num_samples, stack_size, hidden_size)
-        shared_features = shared_features.reshape((num_envs, num_samples, self.stack_size, self.hidden_size)).to(self.device)
+        # Pass the older states through the transformer encoder only if there are non-zero states
+        if non_zero_mask.any():
+            transformer_output = self.transformer_encoder(embedded_states, src_key_padding_mask=key_padding_mask)
+        else:
+            transformer_output = torch.zeros_like(embedded_states)  # Output zeros if all older states are zero
 
-        # Apply mean pooling along the spatial dimensions
-        pooled_features = torch.mean(shared_features, dim=2)
+        # Handle NaN values in the transformer_output (When older_states are all empty)
+        transformer_output = torch.where(torch.isnan(transformer_output), torch.zeros_like(transformer_output), transformer_output)
 
-        # Reshape back to (num_envs, num_samples, hidden_size) or (num_envs, hidden_size) in the single sample case
-        pooled_features = pooled_features.reshape((num_envs, num_samples, self.hidden_size))
+        # Process the most recent state through the linear layer
+        linear_output = self.linear(recent_state)
 
-        # Compute value
-        value = self.linear(pooled_features)
+        # Apply max pooling to the transformer output
+        pooled_output, _ = torch.max(transformer_output, dim=1)
+
+        # Combine the pooled transformer output and linear output
+        combined_output = torch.cat((pooled_output, linear_output), dim=-1)
+
+        # Compute the value predictions
+        value = self.value_net(combined_output).view(num_envs, num_samples, 1)
 
         return value
 
