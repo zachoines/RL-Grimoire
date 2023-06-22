@@ -130,6 +130,8 @@ class ValueNetworkTransformer(nn.Module):
         # Embedding layer for older states
         self.embedding = nn.Linear(self.state_size, hidden_size).to(device)
 
+        self.positional_encodings = self.create_positional_encodings(stack_size - 1, hidden_size).to(device)
+
         # Transformer encoder layers
         encoder_layers = nn.TransformerEncoderLayer(d_model=hidden_size, nhead=nhead, batch_first=True).to(device)
         self.transformer_encoder = nn.TransformerEncoder(encoder_layers, num_layers).to(device)
@@ -148,6 +150,24 @@ class ValueNetworkTransformer(nn.Module):
 
         self.apply(self.init_weights)
         self.to(self.device)
+
+    @staticmethod
+    def create_positional_encodings(seq_len: int, d_model: int):
+        """Creates positional encodings for the Transformer model.
+
+        Args:
+            seq_len: The sequence length.
+            d_model: The dimension of the embeddings (i.e., model dimension).
+            batch_size: The batch size.
+
+        Returns:
+            A tensor containing the positional encodings.
+        """
+        pos = torch.arange(seq_len, dtype=torch.float32).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, d_model, 2).float() * -(math.log(10000.0) / d_model))
+        pos_enc = pos * div_term
+        pos_enc = torch.stack([torch.sin(pos_enc), torch.cos(pos_enc)], dim=-1).view(seq_len, d_model)
+        return pos_enc
 
     def init_weights(self, m):
         if type(m) == nn.Linear:
@@ -174,39 +194,47 @@ class ValueNetworkTransformer(nn.Module):
         state = state.reshape(num_envs * num_samples, self.stack_size, self.state_size)
         recent_state, older_states = state[:, -1, :], state[:, :-1, :]
 
-        # Flatten the older states back into 2D form for the embedding layer
-        older_states = older_states.reshape(num_envs * num_samples * (self.stack_size - 1), self.state_size)
+         # Flatten the older states back into 2D form for the embedding layer
+        older_states = older_states.reshape(num_envs * num_samples, (self.stack_size - 1), self.state_size)
+
+        # Move tensors to the specified device
         older_states = older_states.to(self.device)
         recent_state = recent_state.to(self.device)
 
-        # Create a mask to ignore zero-padded states in the transformer encoder
-        non_zero_mask = torch.all(older_states == 0, dim=-1)
-        mask = non_zero_mask.reshape(num_envs * num_samples, self.stack_size - 1)
+        
 
         # Embed the older states and reshape them back into sequence form
         embedded_states = self.embedding(older_states)
-        embedded_states = embedded_states.reshape(num_envs * num_samples, self.stack_size - 1, self.hidden_size)
 
-        # Create the key_padding_mask by inverting the mask and converting it to a byte tensor
-        key_padding_mask = mask.to(torch.bool).to(self.device)
+        # Add positional encodings to the older states
+        embedded_states += self.positional_encodings
 
-        # Pass the older states through the transformer encoder only if there are non-zero states
-        if non_zero_mask.any():
-            transformer_output = self.transformer_encoder(embedded_states, src_key_padding_mask=key_padding_mask)
-        else:
-            transformer_output = torch.zeros_like(embedded_states)  # Output zeros if all older states are zero
+        # # Create a mask to ignore zero-padded states in the transformer encoder
+        # mask = torch.all(older_states == 0, dim=2)
 
-        # Handle NaN values in the transformer_output (When older_states are all empty)
-        transformer_output = torch.where(torch.isnan(transformer_output), torch.zeros_like(transformer_output), transformer_output)
+        # # Create the key_padding_mask by inverting the mask and converting it to a byte tensor
+        # key_padding_mask = mask.to(torch.bool).to(self.device)
+
+        # # Pass the older states through the transformer encoder only if there are non-zero states
+        # if key_padding_mask.any():
+        #     transformer_output = self.transformer_encoder(embedded_states, src_key_padding_mask=key_padding_mask)
+        # else:
+        #     transformer_output = torch.zeros_like(embedded_states)  # Output zeros if all older states are zero
+
+        # # Handle NaN values in the transformer_output (When older_states are all empty)
+        # transformer_output = torch.where(torch.isnan(transformer_output), torch.zeros_like(transformer_output), transformer_output)
+
+        # Pass the older states through the transformer encoder
+        transformer_output = self.transformer_encoder(embedded_states)
 
         # Process the most recent state through the linear layer
         linear_output = self.linear(recent_state)
 
         # Apply max pooling to the transformer output
-        pooled_output, _ = torch.max(transformer_output, dim=1)
+        pooled_output = torch.mean(transformer_output, dim=1)
 
         # Combine the pooled transformer output and linear output
-        combined_output = torch.cat((pooled_output, linear_output), dim=-1)
+        combined_output = F.leaky_relu(torch.cat((pooled_output, linear_output), dim=-1))
 
         # Compute the value predictions
         value = self.value_net(combined_output).view(num_envs, num_samples, 1)

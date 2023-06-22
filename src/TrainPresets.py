@@ -583,22 +583,22 @@ class PPO2BraxHopperConfig(Config):
 class PPO2BraxAntConfig(Config):
     def __init__(self):
         self.max_episode_steps = 256
-        self.num_envs = 3
+        self.num_envs = 8
 
         super().__init__(
             PPO2Params(
-                clip = 0.2,
-                clipped_value_loss_eps = 0.2, # Used when value_loss_clipping is enabled
+                clip = 0.15,
+                clipped_value_loss_eps = 0.15, # Used when value_loss_clipping is enabled
                 value_loss_clipping = False, 
                 gamma = 0.99,
-                policy_learning_rate = 2e-4,
-                value_learning_rate = 2.5e-3, # Deactivated when "combined_optimizer" enabled
-                entropy_coefficient = 0.2,
+                policy_learning_rate = 1e-4,
+                value_learning_rate = 1e-3, # Deactivated when "combined_optimizer" enabled
+                entropy_coefficient = 0.1,
                 hidden_size = 256,
-                gae_lambda = 0.50,
+                gae_lambda = 0.95,
                 value_loss_weight = 0.5, # Activated when "combined_optimizer" enabled
-                max_grad_norm = .5,
-                use_moving_average_reward = True,
+                max_grad_norm = 5.0,
+                use_moving_average_reward = False,
                 combined_optimizer = False
             ),
             TrainerParams(
@@ -622,7 +622,7 @@ class PPO2BraxAntConfig(Config):
                     "healthy_reward": 0.50, # 1.00,
                     "ctrl_cost_weight": 0.25, # .5,
                     "contact_cost_weight": 2.5e-4, # 5e-4,
-                    "use_contact_forces": True,
+                    "use_contact_forces": False,
                     "terminate_when_unhealthy": True
                 }
             )

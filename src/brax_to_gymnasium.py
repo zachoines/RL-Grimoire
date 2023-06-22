@@ -42,7 +42,64 @@ def convert_brax_to_gym(name: str, frame_stack: bool = True, stack_size: int = 1
 
     return env
 
+
 class BraxFrameStack(gym.Wrapper):
+    def __init__(self, env: gym.Env, stack_size: int, device: torch.device = torch.device("cpu")):
+        super().__init__(env)
+        self.stack_size = stack_size
+        self.num_envs = env.num_envs
+        self.device = device
+
+        self.stacks = [torch.zeros((self.stack_size, self.env.observation_space.shape[-1]), dtype=torch.float32).to(self.device) for _ in range(self.num_envs)]
+        
+        self.observation_space = gym.spaces.Box(
+            low=-np.inf, 
+            high=np.inf, 
+            shape=(self.num_envs, self.stack_size * self.env.observation_space.shape[-1]), 
+            dtype=np.float32
+        )
+
+    def reset(self):
+        obs, info = self.env.reset()
+        self.stacks = [torch.zeros((self.stack_size, self.env.observation_space.shape[-1]), dtype=torch.float32).to(self.device) for _ in range(self.num_envs)]
+        for i in range(self.num_envs):
+            self.stacks[i][-1] = obs[i, :].to(self.device)
+        return self.get_obs(), info
+
+    def step(self, action):
+        obs, reward, done, truncs, info = self.env.step(action)
+
+        # Create a list to hold the information about whether each episode is done or truncated
+        reset_indices = []
+
+        for i in range(self.num_envs):
+            self.stacks[i] = torch.cat((self.stacks[i][1:], obs[i, :].unsqueeze(0).to(self.device)))
+
+            # If the episode is done or truncated, add the index to the list
+            if done[i] or truncs[i]:
+                reset_indices.append(i)
+
+        # Store the current state of the stacks
+        curr_obs = self.get_obs()
+
+        # Now, reset the stacks for the environments where the episode is done or truncated
+        for i in reset_indices:
+            self.stacks[i] = torch.zeros((self.stack_size, self.env.observation_space.shape[-1]), dtype=torch.float32).to(self.device)
+
+        return curr_obs, reward, done, truncs, info
+
+    def get_obs(self):
+        # Convert the list of stacks into a 3D tensor of shape (num_envs, stack_size, state_size)
+        obs = torch.stack(self.stacks)
+
+        # Reshape the tensor to be of shape (num_envs, stack_size * state_size)
+        obs = obs.view(self.num_envs, -1)
+
+        return obs
+
+
+
+class BraxFrameStackV1(gym.Wrapper):
     def __init__(self, env: gym.Env, stack_size: int, device: torch.device = torch.device("cpu")):
         super().__init__(env)
         self.stack_size = stack_size  # Number of frames to stack
@@ -79,9 +136,14 @@ class BraxFrameStack(gym.Wrapper):
         return self.get_obs(), reward, done, truncs, info  # Return the stacked frames, reward, done flag, truncations, and info
 
     def get_obs(self):
-        # Stack the frames together and flatten the last two dimensions
-        obs = torch.stack([torch.stack(list(frame)) for frame in self.frames]).view(self.num_envs, -1)
+        # Convert the list of stacks into a 3D tensor of shape (num_envs, stack_size, state_size)
+        obs = torch.stack(self.stacks)
+
+        # Reshape the tensor to be of shape (num_envs, stack_size * state_size)
+        obs = obs.view(self.num_envs, -1)
+
         return obs
+
 
 class GymWrapper(gym.Env):
 
