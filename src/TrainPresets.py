@@ -540,22 +540,22 @@ class PPO2BraxHopperConfig(Config):
 
 class PPO2BraxAntConfig(Config):
     def __init__(self):
-        self.max_episode_steps = 256
-        self.num_envs = 8
+        self.max_episode_steps = 1024
+        self.num_envs = 32
 
         super().__init__(
             PPO2Params(
-                clip = 0.15,
-                clipped_value_loss_eps = 0.15, # Used when value_loss_clipping is enabled
+                clip = 0.2,
+                clipped_value_loss_eps = 0.2, # Used when value_loss_clipping is enabled
                 value_loss_clipping = False, 
                 gamma = 0.99,
-                policy_learning_rate = 1e-4,
+                policy_learning_rate = 2.5e-4,
                 value_learning_rate = 1e-3, # Deactivated when "combined_optimizer" enabled
-                entropy_coefficient = 0.1,
-                hidden_size = 256,
-                gae_lambda = 0.95,
+                entropy_coefficient = 0.08,
+                hidden_size = 128,
+                gae_lambda = 0.5,
                 value_loss_weight = 0.5, # Activated when "combined_optimizer" enabled
-                max_grad_norm = 5.0,
+                max_grad_norm = 1.0,
                 use_moving_average_reward = False,
                 combined_optimizer = False
             ),
