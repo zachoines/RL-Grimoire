@@ -1,7 +1,6 @@
 import torch
 from torch import nn
 from torch.nn import functional as F
-from Networks import StatefulTransformer
 from typing import Tuple
 import math
 
