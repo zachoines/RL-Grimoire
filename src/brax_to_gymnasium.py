@@ -98,53 +98,6 @@ class BraxFrameStack(gym.Wrapper):
         return obs
 
 
-
-class BraxFrameStackV1(gym.Wrapper):
-    def __init__(self, env: gym.Env, stack_size: int, device: torch.device = torch.device("cpu")):
-        super().__init__(env)
-        self.stack_size = stack_size  # Number of frames to stack
-        self.num_envs = env.num_envs  # Number of environments
-        self.device = device  # Device to use for computations
-
-        # Initialize a deque for each environment to store the frames
-        self.frames = [deque([torch.zeros(self.env.observation_space.shape[-1], dtype=torch.float32).to(self.device) for _ in range(self.stack_size)], maxlen=stack_size) for _ in range(self.num_envs)]
-        
-        # Modify the observation space to account for the frame stacking
-        self.observation_space = gym.spaces.Box(
-            low=-np.inf, 
-            high=np.inf, 
-            shape=(self.num_envs, self.stack_size * self.env.observation_space.shape[-1]), 
-            dtype=np.float32
-        )
-
-    def reset(self):
-        obs, info = self.env.reset()  # Reset the environment
-        # Reset the frame deque for each environment
-        for i in range(self.num_envs):
-            self.frames[i] = deque([torch.zeros(self.env.observation_space.shape[-1], dtype=torch.float32).to(self.device) for _ in range(self.stack_size)], maxlen=self.stack_size)
-            self.frames[i].append(obs[i, :].to(self.device))  # Append the initial observation to the deque
-        return self.get_obs(), info  # Return the stacked frames and the info
-
-    def step(self, action):
-        obs, reward, done, truncs, info = self.env.step(action)  # Step the environment with the action
-        # If the episode is done or truncated, reset the frame deque
-        # Otherwise, append the new observation to the deque
-        for i in range(self.num_envs):
-            if done[i] or truncs[i]:
-                self.frames[i] = deque([torch.zeros(self.env.observation_space.shape[-1], dtype=torch.float32).to(self.device) for _ in range(self.stack_size)], maxlen=self.stack_size)
-            self.frames[i].append(obs[i, :].to(self.device))
-        return self.get_obs(), reward, done, truncs, info  # Return the stacked frames, reward, done flag, truncations, and info
-
-    def get_obs(self):
-        # Convert the list of stacks into a 3D tensor of shape (num_envs, stack_size, state_size)
-        obs = torch.stack(self.stacks)
-
-        # Reshape the tensor to be of shape (num_envs, stack_size * state_size)
-        obs = obs.view(self.num_envs, -1)
-
-        return obs
-
-
 class GymWrapper(gym.Env):
 
   # Flag that prevents `gym.register` from misinterpreting the `_step` and

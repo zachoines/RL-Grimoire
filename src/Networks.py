@@ -115,8 +115,8 @@ class ValueNetworkTransformer(nn.Module):
         in_features: int, 
         hidden_size: int, 
         stack_size: int = 8, 
-        num_layers: int = 2, 
-        nhead: int = 2, 
+        num_layers: int = 1, 
+        nhead: int = 1, 
         device: torch.device = torch.device("cpu")
     ):
         super().__init__()
@@ -133,7 +133,7 @@ class ValueNetworkTransformer(nn.Module):
         self.positional_encodings = self.create_positional_encodings(stack_size - 1, hidden_size).to(device)
 
         # Transformer encoder layers
-        encoder_layers = nn.TransformerEncoderLayer(d_model=hidden_size, nhead=nhead, batch_first=True).to(device)
+        encoder_layers = nn.TransformerEncoderLayer(d_model=hidden_size, nhead=nhead, batch_first=True, dropout=0).to(device)
         self.transformer_encoder = nn.TransformerEncoder(encoder_layers, num_layers).to(device)
 
         # Linear layer for recent state
@@ -226,124 +226,10 @@ class ValueNetworkTransformer(nn.Module):
         pooled_output = torch.mean(transformer_output, dim=1)
 
         # Combine the pooled transformer output and linear output
-        combined_output = F.leaky_relu(torch.cat((pooled_output, linear_output), dim=-1))
+        # combined_output = F.leaky_relu(torch.cat((pooled_output, linear_output), dim=-1))
+        combined_output = F.leaky_relu(torch.cat((transformer_output[:, -1, :], linear_output), dim=-1))
 
         # Compute the value predictions
         value = self.value_net(combined_output).view(num_envs, num_samples, 1)
 
         return value
-
-class ValueNetworkRecurrent(nn.Module):
-    def __init__(self, in_features: int, hidden_size: int, device: torch.device = torch.device("cpu")):
-        super().__init__()
-
-        self.transformer = StatefulTransformer(in_features, hidden_size, hidden_size, device=device)
-        self.value_net = nn.Sequential(
-            nn.Linear(hidden_size, hidden_size),
-            nn.LeakyReLU(),
-            nn.Linear(hidden_size, 1)
-        )
-
-        self.apply(self.init_weights)
-        self.device = device
-        self.to(self.device)
-
-    def init_weights(self, m):
-        if type(m) == nn.Linear:
-            nn.init.kaiming_normal_(m.weight, a=0.01)
-            m.weight.data *= 0.1
-            m.bias.data.fill_(0.0)
-
-    def forward(self, x, dones=None):
-        x = self.transformer(x, dones==1)
-        x = torch.squeeze(x)
-        x = F.leaky_relu(x)
-        x = self.value_net(x)
-        return x
-
-    def reset_memory(self):
-        self.transformer.reset_memory()
-
-    def zero_grad(self):
-        super().zero_grad()
-        self.reset_memory()
-
-class StatefulTransformer(nn.Module):
-    def __init__(self, in_features: int, hidden_size: int, output_size: int, device: torch.device, max_memory: int = 100):
-        super().__init__()
-        self.in_features = in_features
-        self.hidden_size = hidden_size
-        self.output_size = output_size
-        self.device = device
-        self.max_memory = max_memory
-
-        self.embedding = nn.Linear(in_features, hidden_size).to(device)
-        self.transformer = TransformerEncoder(
-            TransformerEncoderLayer(d_model=hidden_size, nhead=8, dim_feedforward=hidden_size, batch_first=True),
-            num_layers=1
-        ).to(device)
-        self.out = nn.Linear(hidden_size, output_size).to(device)
-
-        # Initial hidden state for each environment
-        self.memory = {}
-
-    def update_memory(self, env_id, sequence):
-        """Update the memory of a trajectory by appending new states and keeping only the most recent states."""
-        if env_id in self.memory:
-            # Append new sequence to memory
-            updated_memory = torch.cat([self.memory[env_id], sequence], dim=0)
-            # Keep only the most recent states up to max_memory
-            num_extra_states = max(0, updated_memory.shape[0] - self.max_memory)
-            updated_memory = updated_memory[num_extra_states:]
-        else:
-            updated_memory = sequence
-
-        self.memory[env_id] = updated_memory
-
-    def forward(self, x, dones, mode='train'):
-        """Process input sequences through the transformer and return the output for each step of each sequence."""
-        x = x.to(self.device)
-        dones = dones.to(self.device)
-        x_embedded = self.embedding(x)
-
-        batch_size, seq_len, _ = x.size()
-
-        outputs = []
-        for i in range(batch_size):
-            env_id = i  # Assuming the environment id is the index in the batch
-            traj_starts = [0] + (dones[i].nonzero(as_tuple=True)[0] + 1).tolist()
-            if traj_starts[-1] != seq_len:
-                traj_starts.append(seq_len)
-            env_outputs = []
-            for start, end in zip(traj_starts[:-1], traj_starts[1:]):
-                sequence = x_embedded[i, start:end]
-                if env_id not in self.memory or (mode == 'eval' and dones[i, start]) or (mode == 'train' and dones[i, end-1]):
-                    # Start a new trajectory
-                    self.memory[env_id] = sequence
-                else:
-                    # Continue an existing trajectory
-                    self.update_memory(env_id, sequence)
-
-                # Process the trajectory with the transformer
-                output = self.transformer(self.memory[env_id].unsqueeze(0))
-
-                # Append the corresponding output for this trajectory
-                env_outputs.append(self.out(output[:, -sequence.size(0):, :]))
-
-            # Concatenate all outputs for this environment
-            outputs.append(torch.cat(env_outputs, dim=1))
-
-        return torch.stack(outputs, dim=0)
-
-    def reset_memory(self):
-        """Reset the memory of all trajectories."""
-        self.memory = {}
-
-    def get_memory(self):
-        """Return a copy of the memory dictionary."""
-        return self.memory.copy()
-
-    def set_memory(self, memory):
-        """Set the memory dictionary to a given value."""
-        self.memory = memory
-
