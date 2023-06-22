@@ -76,8 +76,8 @@ class GaussianGradientTransformerPolicy(nn.Module):
         in_features: int,
         out_features: int,
         hidden_size: int,
-        stack_size: int = 16,
-        num_layers: int = 4,
+        stack_size: int = 8,
+        num_layers: int = 2,
         nhead: int = 2,
         device: torch.device = torch.device("cpu")
     ):
@@ -133,10 +133,9 @@ class GaussianGradientTransformerPolicy(nn.Module):
 
     def init_weights(self, m):
         # Weight initialization function to be applied to each layer
-        pass
-        # if type(m) == nn.Linear:
-        #     nn.init.kaiming_normal_(m.weight, a=0.01)
-        #     m.bias.data.fill_(0.0)
+        if type(m) == nn.Linear:
+            nn.init.kaiming_normal_(m.weight, a=0.01)
+            m.bias.data.fill_(0.0)
 
     def forward(self, state: torch.Tensor):
         """
@@ -161,9 +160,6 @@ class GaussianGradientTransformerPolicy(nn.Module):
 
         # Separate the most recent state from the older states
         recent_state, older_states = state[:, -1, :], state[:, :-1, :]
-
-        # Flatten the older states back into 2D form for the embedding layer
-        older_states = older_states.reshape(num_envs * num_samples, (self.stack_size - 1), self.state_size)
 
         # Move tensors to the specified device
         older_states = older_states.to(self.device)
@@ -201,8 +197,8 @@ class GaussianGradientTransformerPolicy(nn.Module):
         combined_output = F.leaky_relu(torch.cat((pooled_output, linear_output), dim=-1))
 
         # Compute the mean and standard deviation
-        means = self.mean(combined_output).view(num_envs, num_samples, self.out_features) + self.eps
-        stds = self.std(combined_output).view(num_envs, num_samples, self.out_features) + self.eps
+        means = self.mean(combined_output).view(num_envs, num_samples, self.out_features)
+        stds = self.std(combined_output).view(num_envs, num_samples, self.out_features)
         stds = torch.clamp(stds, min=self.min_std_value)  # Clamp the standard deviation to avoid values too close to 0
 
         return means, stds

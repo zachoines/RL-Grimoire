@@ -180,7 +180,7 @@ class PPO2(Agent):
         targets = values + advantages
         return targets, advantages
 
-    def learn(self, batch: list[Transition], num_envs: int, batch_size: int, num_rounds: int = 8, mini_batch_size: int = 64) -> dict[str, Tensor]:
+    def learn(self, batch: list[Transition], num_envs: int, batch_size: int, num_rounds: int = 4, mini_batch_size: int = 256) -> dict[str, Tensor]:
         self.update_count += 1
 
         # Reshape batch to gathered lists

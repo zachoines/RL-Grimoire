@@ -114,8 +114,8 @@ class ValueNetworkTransformer(nn.Module):
         self, 
         in_features: int, 
         hidden_size: int, 
-        stack_size: int = 16, 
-        num_layers: int = 4, 
+        stack_size: int = 8, 
+        num_layers: int = 2, 
         nhead: int = 2, 
         device: torch.device = torch.device("cpu")
     ):
@@ -143,12 +143,10 @@ class ValueNetworkTransformer(nn.Module):
         self.value_net = nn.Sequential(
             nn.Linear(hidden_size * 2, hidden_size),
             nn.LeakyReLU(),
-            nn.Linear(hidden_size, hidden_size),
-            nn.LeakyReLU(),
             nn.Linear(hidden_size, 1)
         ).to(device)
 
-        self.apply(self.init_weights)
+        # self.apply(self.init_weights)
         self.to(self.device)
 
     @staticmethod
@@ -172,7 +170,6 @@ class ValueNetworkTransformer(nn.Module):
     def init_weights(self, m):
         if type(m) == nn.Linear:
             nn.init.kaiming_normal_(m.weight, a=0.01)
-            m.weight.data *= 0.1
             m.bias.data.fill_(0.0)
 
     def forward(self, state: torch.Tensor):
@@ -194,14 +191,9 @@ class ValueNetworkTransformer(nn.Module):
         state = state.reshape(num_envs * num_samples, self.stack_size, self.state_size)
         recent_state, older_states = state[:, -1, :], state[:, :-1, :]
 
-         # Flatten the older states back into 2D form for the embedding layer
-        older_states = older_states.reshape(num_envs * num_samples, (self.stack_size - 1), self.state_size)
-
         # Move tensors to the specified device
         older_states = older_states.to(self.device)
         recent_state = recent_state.to(self.device)
-
-        
 
         # Embed the older states and reshape them back into sequence form
         embedded_states = self.embedding(older_states)

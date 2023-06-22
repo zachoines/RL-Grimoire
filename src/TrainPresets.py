@@ -256,48 +256,6 @@ class PPO2ReacherConfig(Config):
             )
         )
 
-class PPO2SwimmerConfig(Config):
-    def __init__(self):
-        self.max_episode_steps = 256
-        self.num_envs = 8
-        super().__init__(
-            PPO2Params(
-                clip = 0.2,
-                gamma = 0.99,
-                policy_learning_rate = 3e-4,
-                value_learning_rate = 3e-4, # Deactivated when "combined_optimizer" enabled
-                entropy_coefficient = 0.2,
-                hidden_size = 256,
-                gae_lambda = 0.95,
-                clipped_value_loss_eps = 0.2,
-                value_loss_weight = 0.5, # Activated when "combined_optimizer" enabled
-                max_grad_norm = .5,
-                use_moving_average_reward = True,
-                combined_optimizer = False
-            ),
-            TrainerParams(
-                batch_transitions_by_env_trajectory = True, # Must be enabled for PPO
-                num_epochs = 2000,
-                batches_per_epoch = 1,
-                batch_size = 32,
-                updates_per_batch = 1,
-                shuffle_batches = False, # False to not interfere with GAE creation
-                save_location = "./saved_models/SwimmerPPO2",
-                preprocess_action = lambda x: x.view((self.num_envs,2)).to(dtype=torch.float32).numpy()
-            ),
-            EnvParams(
-                env_name = "Swimmer-v4",
-                env_normalization=False,
-                num_envs = self.num_envs,
-                max_episode_steps = self.max_episode_steps,
-                vector_env=True,
-                misc_arguments = {
-                    "max_episode_steps": self.max_episode_steps,
-                    "render_mode": "rgb_array"
-                }
-            )
-        )
-
 class PPO2HalfCheetahConfig(Config):
     def __init__(self):
         self.max_episode_steps = 256
@@ -343,7 +301,7 @@ class PPO2HalfCheetahConfig(Config):
 class PPO2BraxHalfCheetahConfig(Config):
     def __init__(self):
         self.max_episode_steps = 256
-        self.num_envs = 2
+        self.num_envs = 32
 
         super().__init__(
             PPO2Params(
@@ -353,8 +311,8 @@ class PPO2BraxHalfCheetahConfig(Config):
                 gamma = 0.99,
                 policy_learning_rate = 2e-4,
                 value_learning_rate = 2.5e-3, # Deactivated when "combined_optimizer" enabled
-                entropy_coefficient = 0.1,
-                hidden_size = 256,
+                entropy_coefficient = 0.2,
+                hidden_size = 128,
                 gae_lambda = 0.95,
                 value_loss_weight = 0.5, # Activated when "combined_optimizer" enabled
                 max_grad_norm = 1.0,
@@ -365,7 +323,7 @@ class PPO2BraxHalfCheetahConfig(Config):
                 batch_transitions_by_env_trajectory = True, # Must be enabled for PPO
                 num_epochs = 2000,
                 batches_per_epoch = 1,
-                batch_size = 16,
+                batch_size = 512,
                 updates_per_batch = 1,
                 shuffle_batches = False, # False to not interfere with GAE creation
                 save_location = "./saved_models/HalfCheetahPPO"
@@ -441,7 +399,7 @@ class PPO2BraxHalfCheetahRecurrentConfig(Config):
 class PPO2BraxSwimmerConfig(Config):
     def __init__(self):
         self.max_episode_steps = 1024
-        self.num_envs = 8
+        self.num_envs = 64
 
         super().__init__(
             PPO2Params(
@@ -451,8 +409,8 @@ class PPO2BraxSwimmerConfig(Config):
                 gamma = 0.99,
                 policy_learning_rate = 1e-4,
                 value_learning_rate = 5e-4, # Deactivated when "combined_optimizer" enabled
-                entropy_coefficient = 0.2,
-                hidden_size = 256,
+                entropy_coefficient = 0.35,
+                hidden_size = 128,
                 gae_lambda = 0.95,
                 value_loss_weight = 1.0, # Activated when "combined_optimizer" enabled
                 max_grad_norm = 1.0,
@@ -463,7 +421,7 @@ class PPO2BraxSwimmerConfig(Config):
                 batch_transitions_by_env_trajectory = True, # Must be enabled for PPO
                 num_epochs = 2000,
                 batches_per_epoch = 1,
-                batch_size = 32,
+                batch_size = 128,
                 updates_per_batch = 1,
                 shuffle_batches = False, # False to not interfere with GAE creation
                 save_location = "./saved_models/BraxSwimmerPPO2"
@@ -480,7 +438,7 @@ class PPO2BraxSwimmerConfig(Config):
                     "action_repeat": 1,
                     "forward_reward_weight": 1.0,
                     "ctrl_cost_weight": 0.1,
-                    "legacy_spring" : True,
+                    # "legacy_spring" : True,
                     "exclude_current_positions_from_observation": False,
                     "reset_noise_scale": 0.1,
                 }
@@ -535,7 +493,7 @@ class PPO2HumanoidStandupConfig(Config):
 class PPO2BraxHopperConfig(Config):
     def __init__(self):
         self.max_episode_steps = 1024
-        self.num_envs = 32
+        self.num_envs = 128
 
         super().__init__(
             PPO2Params(
@@ -549,15 +507,15 @@ class PPO2BraxHopperConfig(Config):
                 hidden_size = 256,
                 gae_lambda = 0.95,
                 value_loss_weight = 0.5, # Activated when "combined_optimizer" enabled
-                max_grad_norm = .5,
-                use_moving_average_reward = True,
+                max_grad_norm = 1.0,
+                use_moving_average_reward = False,
                 combined_optimizer = False
             ),
             TrainerParams(
                 batch_transitions_by_env_trajectory = True, # Must be enabled for PPO
                 num_epochs = 2000,
                 batches_per_epoch = 1,
-                batch_size = 512,
+                batch_size = 64,
                 updates_per_batch = 1,
                 shuffle_batches = False, # False to not interfere with GAE creation
                 save_location = "./saved_models/BraxHopperPPO2"
