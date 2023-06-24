@@ -7,8 +7,8 @@ import random
 from typing import Any, Union, List
 
 def clear_directories():
-    # directories = ['videos', 'saved_models']
-    directories = ['videos', 'runs', 'saved_models']
+    directories = ['videos', 'saved_models']
+    # directories = ['videos', 'runs', 'saved_models']
 
     for directory in directories:
         for root, _, files in os.walk(directory):
@@ -59,19 +59,16 @@ def to_tensor(x: Union[np.ndarray, torch.Tensor, int, float, List], device=torch
 
 class Normalizer:
 
-    """
-    The Normalizer class adapts to the changing distribution of input data by using the Adam 
-    running average calculation. It updates the running mean and variance based on the 
-    incoming data, allowing it to respond to changes in the data distribution over time.
-    """
-
-    def __init__(self, beta1: float = 0.9, beta2: float = 0.999, eps: float = 1e-8):
-        self.beta1 = beta1
-        self.beta2 = beta2
+    def __init__(self, mean_decay_rate: float = 0.9, variance_decay_rate: float = 0.999, eps: float = 1e-8, lower_percentile: float = 0.01, upper_percentile: float = 0.99, device: torch.device = torch.device('cpu')):
+        self.mean_decay_rate = mean_decay_rate
+        self.variance_decay_rate = variance_decay_rate
         self.eps = eps
-        self.m = 0  # Running mean initialization
-        self.v = 0  # Running variance initialization
-        self.t = 0  # Timestep initialization
+        self.m = torch.tensor(0., device=device)  # Running mean initialization
+        self.v = torch.tensor(eps, device=device)  # Running variance initialization, initialized with eps to prevent division by zero
+        self.t = torch.tensor(0., device=device)  # Timestep initialization
+        self.lower_percentile = lower_percentile
+        self.upper_percentile = upper_percentile
+        self.device = device
 
     def update(self, data: torch.Tensor) -> torch.Tensor:
         """
@@ -81,16 +78,29 @@ class Normalizer:
         :return: Normalized data with the same shape as input.
         """
         
+        data = data.to(self.device)  # Ensure data is on the correct device
         data_flattened = data.view(-1)  # Flatten the data tensor
         batch_size = data_flattened.shape[0]
         self.t += batch_size  # Increment timestep by batch size
-        self.m = self.beta1 * self.m + (1 - self.beta1) * data_flattened.mean()  # Update running mean
-        self.v = self.beta2 * self.v + (1 - self.beta2) * data_flattened.var(unbiased=False)  # Update running variance
-        m_hat = self.m / (1 - self.beta1 ** self.t)  # Bias-corrected mean estimate
-        v_hat = self.v / (1 - self.beta2 ** self.t)  # Bias-corrected variance estimate
+
+        # Winsorize the data
+        if self.device.type == 'cpu' or self.device.type.startswith('cuda'):
+            lower = data_flattened.kthvalue(int(self.lower_percentile * batch_size)).values
+            upper = data_flattened.kthvalue(int(self.upper_percentile * batch_size)).values
+        else:
+            sorted_data, _ = torch.sort(data_flattened)
+            lower = sorted_data[int(self.lower_percentile * batch_size)]
+            upper = sorted_data[int(self.upper_percentile * batch_size)]
+        data_flattened = torch.clamp(data_flattened, lower, upper)
+
+        self.m = self.mean_decay_rate * self.m + (1 - self.mean_decay_rate) * data_flattened.mean()  # Update running mean
+        var_update = self.variance_decay_rate * self.v + (1 - self.variance_decay_rate) * data_flattened.var(unbiased=False)  # Compute running variance update
+        self.v = torch.max(var_update, to_tensor(self.eps, device=self.device, dtype=torch.float32))  # Update running variance, ensuring it's never less than eps
+
+        m_hat = self.m / (1 - self.mean_decay_rate ** self.t)  # Bias-corrected mean estimate
+        v_hat = self.v / (1 - self.variance_decay_rate ** self.t)  # Bias-corrected variance estimate
         data_norm = (data - m_hat) / (torch.sqrt(v_hat) + self.eps)  # Normalize data
         return data_norm
-
 
 class RunningMeanStd:
 

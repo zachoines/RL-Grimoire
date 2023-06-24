@@ -100,21 +100,21 @@ class PPO2(Agent):
             self.action_min = float(self.action_space.low_repr) # type: ignore
             self.action_max = float(self.action_space.high_repr) # type: ignore
 
-            self.actor = GaussianGradientTransformerPolicy(
+            self.actor = GaussianGradientPolicy(
                 self.state_size, 
                 self.num_actions, 
                 self.hidden_size,
                 device=device
             )
             
-            self.critic = ValueNetworkTransformer(
+            self.critic = ValueNetwork(
                 self.state_size, 
                 self.hidden_size, 
                 device=device
             )
 
             if self.hyperparams.value_loss_clipping:
-                self.old_critic = ValueNetworkTransformer(
+                self.old_critic = ValueNetworkResidual(
                     self.state_size, 
                     self.hidden_size, 
                     device=device
@@ -129,8 +129,8 @@ class PPO2(Agent):
         self.optimizers = self.get_optimizers()
         self.update_count = 0
 
-        self.reward_normalizer = Normalizer()
-        self.advantage_normalizer = Normalizer()
+        self.reward_normalizer = Normalizer(device=device)
+        self.advantage_normalizer = Normalizer(device=device)
 
     def get_actions(self, state: torch.Tensor, dones: torch.Tensor, eval=False)->tuple[Tensor, Tensor]:
         if self.is_continous():
@@ -180,7 +180,7 @@ class PPO2(Agent):
         targets = values + advantages
         return targets, advantages
 
-    def learn(self, batch: list[Transition], num_envs: int, batch_size: int, num_rounds: int = 4, mini_batch_size: int = 128) -> dict[str, Tensor]:
+    def learn(self, batch: list[Transition], num_envs: int, batch_size: int, num_rounds: int = 8, mini_batch_size: int = 1024) -> dict[str, Tensor]:
         self.update_count += 1
 
         # Reshape batch to gathered lists
@@ -279,7 +279,7 @@ class PPO2(Agent):
                     loss_value2 = torch.square(clipped_values - mb_targets)
                     loss_value = 0.5 * torch.max(loss_value1, loss_value2).mean()
                 else:
-                    loss_value = F.smooth_l1_loss(predicted_values, mb_targets)
+                    loss_value = F.smooth_l1_loss(predicted_values.squeeze(), mb_targets.squeeze())
 
                 if self.hyperparams.combined_optimizer:
                     # Combine the losses 

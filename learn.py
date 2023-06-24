@@ -17,7 +17,6 @@ from src.wrappers import RecordVideoWrapper
 
 import torch
 import gymnasium as gym
-from gymnasium.wrappers.normalize import NormalizeReward, NormalizeObservation
 
 # Setup arguements
 parser = argparse.ArgumentParser(description='Description of your program.')
