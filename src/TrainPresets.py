@@ -448,29 +448,29 @@ class PPO2BraxSwimmerConfig(Config):
 class PPO2HumanoidStandupConfig(Config):
     def __init__(self):
         self.max_episode_steps = 1024
-        self.num_envs = 128
+        self.num_envs = 512
 
         super().__init__(
             PPO2Params(
-                clip = 0.1,
+                clip = 0.2,
                 clipped_value_loss_eps = 0.2, # Used when value_loss_clipping is enabled
                 value_loss_clipping = False, 
                 gamma = 0.99,
-                policy_learning_rate = 1e-4,
-                value_learning_rate = 2.5e-4, # Deactivated when "combined_optimizer" enabled
-                entropy_coefficient = 0.2,
-                hidden_size = 256,
+                policy_learning_rate = 2.5e-4,
+                value_learning_rate = 5e-4, # Deactivated when "combined_optimizer" enabled
+                entropy_coefficient = 0.01,
+                hidden_size = 128,
                 gae_lambda = 0.95,
                 value_loss_weight = 0.5, # Activated when "combined_optimizer" enabled
-                max_grad_norm = 2.0,
-                use_moving_average_reward = True,
+                max_grad_norm = 1.0,
+                use_moving_average_reward = False,
                 combined_optimizer = False
             ),
             TrainerParams(
                 batch_transitions_by_env_trajectory = True, # Must be enabled for PPO
                 num_epochs = 2000,
                 batches_per_epoch = 1,
-                batch_size = 64,
+                batch_size = 16,
                 updates_per_batch = 1,
                 shuffle_batches = False, # False to not interfere with GAE creation
                 save_location = "./saved_models/HumanoidStandupPPO2"

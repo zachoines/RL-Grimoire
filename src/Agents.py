@@ -100,21 +100,21 @@ class PPO2(Agent):
             self.action_min = float(self.action_space.low_repr) # type: ignore
             self.action_max = float(self.action_space.high_repr) # type: ignore
 
-            self.actor = GaussianGradientPolicy(
+            self.actor = GaussianGradientTransformerPolicy(
                 self.state_size, 
                 self.num_actions, 
                 self.hidden_size,
                 device=device
             )
             
-            self.critic = ValueNetwork(
+            self.critic = ValueNetworkTransformerV1(
                 self.state_size, 
                 self.hidden_size, 
                 device=device
             )
 
             if self.hyperparams.value_loss_clipping:
-                self.old_critic = ValueNetworkResidual(
+                self.old_critic = ValueNetworkTransformer(
                     self.state_size, 
                     self.hidden_size, 
                     device=device
@@ -180,12 +180,12 @@ class PPO2(Agent):
         targets = values + advantages
         return targets, advantages
 
-    def learn(self, batch: list[Transition], num_envs: int, batch_size: int, num_rounds: int = 8, mini_batch_size: int = 1024) -> dict[str, Tensor]:
+    def learn(self, batch: list[Transition], num_envs: int, batch_size: int, num_rounds: int = 4, mini_batch_size: int = 512) -> dict[str, Tensor]:
         self.update_count += 1
 
         # Reshape batch to gathered lists
-        with torch.no_grad():
-            states, actions, next_states, rewards, dones, truncs, prev_log_probs = map(torch.stack, zip(*batch))
+        # with torch.no_grad():
+        states, actions, next_states, rewards, dones, truncs, prev_log_probs = map(torch.stack, zip(*batch))
 
         # Reshape and send to device
         states = states.permute((1, 0, 2)).to(device=self.device, dtype=torch.float32).contiguous()
@@ -271,7 +271,7 @@ class PPO2(Agent):
                 )
 
                 # Compute the value loss with clipping
-                predicted_values = self.critic(mb_states).squeeze(-1)
+                predicted_values = self.critic(mb_states)
                 loss_value: torch.Tensor
                 if self.hyperparams.value_loss_clipping:
                     clipped_values = mb_old_values + (predicted_values - mb_old_values).clamp(-self.hyperparams.clipped_value_loss_eps, self.hyperparams.clipped_value_loss_eps)

@@ -106,15 +106,15 @@ class ValueNetworkResidual(nn.Module):
         output = self.output_layer(combined_features)
 
         return output
-  
-class ValueNetworkTransformer(nn.Module):
+
+class ValueNetworkTransformerV1(nn.Module):
     def __init__(
         self, 
         in_features: int, 
         hidden_size: int, 
-        stack_size: int = 32, 
-        num_layers: int = 3, 
-        nhead: int = 4, 
+        stack_size: int = 16, 
+        num_layers: int = 2, 
+        nhead: int = 2, 
         device: torch.device = torch.device("cpu")
     ):
         super().__init__()
@@ -142,12 +142,12 @@ class ValueNetworkTransformer(nn.Module):
 
         # Value network
         self.value_net = nn.Sequential(
-            nn.Linear(hidden_size * 2, hidden_size),  # Multiply by 2 because we concatenate transformer and attention-pooled outputs
-            nn.LeakyReLU(),
-            nn.Linear(hidden_size, 1)
+            # nn.Linear(hidden_size * 2, hidden_size),  # Multiply by 2 because we concatenate transformer and attention-pooled outputs
+            # nn.LeakyReLU(),
+            nn.Linear(hidden_size * 2, 1)
         ).to(device)
 
-        self.apply(self.init_weights)
+        #self.apply(self.init_weights)
         self.to(self.device)
 
     @staticmethod
@@ -163,8 +163,15 @@ class ValueNetworkTransformer(nn.Module):
         """
         pos = torch.arange(seq_len, dtype=torch.float32).unsqueeze(1)
         div_term = torch.exp(torch.arange(0, d_model, 2).float() * -(math.log(10000.0) / d_model))
-        pos_enc = pos * div_term
-        pos_enc = torch.stack([torch.sin(pos_enc), torch.cos(pos_enc)], dim=-1).view(seq_len, d_model)
+
+        pos_enc = torch.zeros(seq_len, d_model)
+        pos_enc[:, 0::2] = torch.sin(pos * div_term)
+        if d_model % 2 == 1:
+            # For odd dimension models, compute one extra term for the cosine function
+            pos_enc[:, 1::2] = torch.cos(pos * div_term[:-1])
+        else:
+            pos_enc[:, 1::2] = torch.cos(pos * div_term)
+
         return pos_enc
 
     def init_weights(self, m):
@@ -205,7 +212,7 @@ class ValueNetworkTransformer(nn.Module):
         embedded_states += self.positional_encodings
 
         # Pass the older states through the transformer encoder
-        transformer_output = self.transformer_encoder(embedded_states)
+        transformer_output = F.leaky_relu(self.transformer_encoder(embedded_states))
 
         # Attention scores for the transformer outputs
         attention_scores = F.softmax(self.attention_linear(transformer_output), dim=1)
@@ -214,12 +221,216 @@ class ValueNetworkTransformer(nn.Module):
         transformer_output = torch.sum(transformer_output * attention_scores, dim=1)
 
         # Process the most recent state through the linear layer
-        linear_output = self.linear(recent_state)
+        linear_output = F.leaky_relu(self.linear(recent_state))
 
         # Combine the pooled transformer output and linear output
-        combined_output = F.leaky_relu(torch.cat((transformer_output, linear_output), dim=-1))
+        combined_output = torch.cat((transformer_output, linear_output), dim=-1)
 
         # Compute the value predictions
         value = self.value_net(combined_output).view(num_envs, num_samples, 1)
 
         return value
+
+class ValueNetworkTransformerV2(nn.Module):
+    def __init__(
+        self, 
+        in_features: int, 
+        hidden_size: int, 
+        stack_size: int = 16, 
+        num_layers: int = 2, 
+        nhead: int = 2, 
+        device: torch.device = torch.device("cpu")
+    ):
+        super().__init__()
+
+        self.in_features = in_features  # Size of the input features
+        self.stack_size = stack_size  # Number of past states to stack
+        self.hidden_size = hidden_size  # Size of the hidden layer
+        self.state_size = self.in_features // self.stack_size  # Size of a single state
+        self.device = device  # Device to use for computations
+
+        # Embedding layer for older states
+        self.embedding = nn.Linear(self.state_size, hidden_size).to(device)
+
+        self.positional_encodings = self.create_positional_encodings(stack_size, hidden_size).to(device)
+
+        # Transformer Encoder Layers
+        encoder_layers = nn.TransformerEncoderLayer(d_model=hidden_size, nhead=nhead, batch_first=True, dropout=0).to(device)
+        self.transformer_encoder = nn.TransformerEncoder(encoder_layers, num_layers).to(device)
+
+        # Value layer
+        self.value_output = nn.Linear(2 * hidden_size, 1).to(device)  # Multiply by 2 because we concatenate last output and max pooled output
+
+        # self.apply(self.init_weights)
+        self.to(self.device)
+
+    @staticmethod
+    def create_positional_encodings(seq_len: int, d_model: int):
+        """Creates positional encodings for the Transformer model.
+
+        Args:
+            seq_len: The sequence length.
+            d_model: The dimension of the embeddings (i.e., model dimension).
+
+        Returns:
+            A tensor containing the positional encodings.
+        """
+        pos = torch.arange(seq_len, dtype=torch.float32).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, d_model, 2).float() * -(math.log(10000.0) / d_model))
+
+        pos_enc = torch.zeros(seq_len, d_model)
+        pos_enc[:, 0::2] = torch.sin(pos * div_term)
+        if d_model % 2 == 1:
+            # For odd dimension models, compute one extra term for the cosine function
+            pos_enc[:, 1::2] = torch.cos(pos * div_term[:-1])
+        else:
+            pos_enc[:, 1::2] = torch.cos(pos * div_term)
+
+        return pos_enc
+
+    def init_weights(self, m):
+        """Weight initialization function to be applied to each layer."""
+        if type(m) == nn.Linear:
+            nn.init.kaiming_normal_(m.weight, a=0.01)
+            m.bias.data.fill_(0.0)
+
+    def forward(self, state: torch.Tensor):
+        # Add a singleton dimension for num_samples if necessary
+        if len(state.size()) == 2:
+            state = state.unsqueeze(1)
+
+        num_envs, num_samples, _ = state.size()
+
+        # Reshape the state tensor to separate the states in the stack
+        state = state.reshape(num_envs * num_samples, self.stack_size, self.state_size).to(self.device)
+
+        # Embed the older states
+        embedded_states = self.embedding(state)
+
+        # Add positional encodings to the older states
+        embedded_states += self.positional_encodings
+
+        # Pass the older states through the transformer encoder
+        transformer_output = self.transformer_encoder(embedded_states)
+
+        # Separate the last output
+        last_output = transformer_output[:, -1, :]
+        rest_output = transformer_output[:, :-1, :]
+
+        # Max pooling over the rest
+        max_pooled_output, _ = torch.max(rest_output, dim=1)
+
+        # Concatenate the last output and max pooled output
+        combined_output = torch.cat([last_output, max_pooled_output], dim=1)
+
+        # Compute the value predictions
+        value = self.value_output(combined_output).view(num_envs, num_samples, 1)
+
+        return value
+    
+class ValueNetworkTransformer(nn.Module):
+    def __init__(
+        self, 
+        in_features: int, 
+        hidden_size: int, 
+        stack_size: int = 16, 
+        num_layers: int = 2, 
+        nhead: int = 2, 
+        device: torch.device = torch.device("cpu")
+    ):
+        super().__init__()
+
+        self.in_features = in_features  # Size of the input features
+        self.stack_size = stack_size  # Number of past states to stack
+        self.hidden_size = hidden_size  # Size of the hidden layer
+        self.state_size = self.in_features // self.stack_size  # Size of a single state
+        self.device = device  # Device to use for computations
+
+        # Embedding layer for older states
+        self.embedding = nn.Linear(self.state_size, hidden_size).to(device)
+
+        self.positional_encodings = self.create_positional_encodings(stack_size, hidden_size).to(device)
+
+        # Transformer Encoder Layers
+        encoder_layers = nn.TransformerEncoderLayer(d_model=hidden_size, nhead=nhead, batch_first=True, dropout=0).to(device)
+        self.transformer_encoder = nn.TransformerEncoder(encoder_layers, num_layers).to(device)
+        
+        # Linear layer to produce attention scores for attention pooling
+        self.attention_linear = nn.Linear(hidden_size, 1).to(device)
+
+        # Value layer
+        self.value_output = nn.Linear(hidden_size, 1).to(device)
+
+        self.apply(self.init_weights)
+        self.to(self.device)
+
+    @staticmethod
+    def create_positional_encodings(seq_len: int, d_model: int):
+        """Creates positional encodings for the Transformer model.
+
+        Args:
+            seq_len: The sequence length.
+            d_model: The dimension of the embeddings (i.e., model dimension).
+
+        Returns:
+            A tensor containing the positional encodings.
+        """
+        pos = torch.arange(seq_len, dtype=torch.float32).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, d_model, 2).float() * -(math.log(10000.0) / d_model))
+
+        pos_enc = torch.zeros(seq_len, d_model)
+        pos_enc[:, 0::2] = torch.sin(pos * div_term)
+        if d_model % 2 == 1:
+            # For odd dimension models, compute one extra term for the cosine function
+            pos_enc[:, 1::2] = torch.cos(pos * div_term[:-1])
+        else:
+            pos_enc[:, 1::2] = torch.cos(pos * div_term)
+
+        return pos_enc
+
+    def init_weights(self, m):
+        """Weight initialization function to be applied to each layer."""
+        if type(m) == nn.Linear:
+            nn.init.kaiming_normal_(m.weight, a=0.01)
+            m.bias.data.fill_(0.0)
+
+    def forward(self, state: torch.Tensor):
+        """Forward pass of the value network.
+
+        Args:
+            state (torch.Tensor): Input state tensor of shape (num_envs, num_samples, stack_size * state_size).
+
+        Returns:
+            torch.Tensor: Value predictions tensor of shape (num_envs * num_samples, 1).
+        """
+        # Add a singleton dimension for num_samples if necessary
+        if len(state.size()) == 2:
+            state = state.unsqueeze(1)
+
+        num_envs, num_samples, _ = state.size()
+
+        # Reshape the state tensor to separate the states in the stack
+        state = state.reshape(num_envs * num_samples, self.stack_size, self.state_size).to(self.device)
+
+        # Embed the older states
+        embedded_states = self.embedding(state)
+
+        # Add positional encodings to the older states
+        embedded_states += self.positional_encodings
+
+        # Pass the older states through the transformer encoder
+        transformer_output = self.transformer_encoder(embedded_states)
+
+        # # Attention scores for the transformer outputs
+        # attention_scores = F.softmax(self.attention_linear(transformer_output), dim=1)
+        
+        # # Apply attention pooling over the transformer output
+        # transformer_output = torch.sum(transformer_output * attention_scores, dim=1)
+
+        # # Combine the pooled transformer output and linear output
+        # combined_output = F.leaky_relu(transformer_output)
+
+        combined_output, _ = torch.max(transformer_output, dim=1)
+
+        # Compute the value predictions
+        return self.value_output(combined_output).reshape(num_envs, num_samples, 1)
