@@ -96,6 +96,7 @@ class GaussianGradientTransformerPolicy(nn.Module):
 
         # Positional encoding
         self.position_embedding = nn.Embedding(self.stack_size, hidden_size).to(device)
+        self.positional_encodings = self.create_positional_encodings(stack_size, hidden_size).to(device)
 
         # Transformer Encoder Layers
         encoder_layers = nn.TransformerEncoderLayer(d_model=self.hidden_size, nhead=nhead, batch_first=True, dropout=0).to(device)
@@ -111,6 +112,32 @@ class GaussianGradientTransformerPolicy(nn.Module):
         self.eps = 1e-8
         self.min_std_value = 1e-4
 
+        self.to(self.device)
+
+    @staticmethod
+    def create_positional_encodings(seq_len: int, d_model: int):
+        """Creates positional encodings for the Transformer model.
+
+        Args:
+            seq_len: The sequence length.
+            d_model: The dimension of the embeddings (i.e., model dimension).
+
+        Returns:
+            A tensor containing the positional encodings.
+        """
+        pos = torch.arange(seq_len, dtype=torch.float32).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, d_model, 2).float() * -(math.log(10000.0) / d_model))
+
+        pos_enc = torch.zeros(seq_len, d_model)
+        pos_enc[:, 0::2] = torch.sin(pos * div_term)
+        if d_model % 2 == 1:
+            # For odd dimension models, compute one extra term for the cosine function
+            pos_enc[:, 1::2] = torch.cos(pos * div_term[:-1])
+        else:
+            pos_enc[:, 1::2] = torch.cos(pos * div_term)
+
+        return pos_enc
+
     def forward(self, state: torch.Tensor):
         # Add a singleton dimension for num_samples if necessary
         if len(state.size()) == 2:
@@ -124,14 +151,17 @@ class GaussianGradientTransformerPolicy(nn.Module):
         # Pass the states through the embedding layer
         embedded_states = self.embedding(state)
 
-        # Add positional encodings to the older states
-        positions = torch.arange(self.stack_size, device=self.device).expand(num_envs * num_samples, self.stack_size)
-        embedded_states = embedded_states + self.position_embedding(positions)
+        # Alternative method for positional encodings
+        embedded_states = self.positional_encodings + embedded_states
 
-        # Pass the older states through the transformer encoder
+        # Create and add positional embeddings to states
+        # positions = torch.arange(self.stack_size, device=self.device).expand(num_envs * num_samples, self.stack_size)
+        # embedded_states = embedded_states + self.position_embedding(positions)
+
+        # Pass the embedded states through the transformer encoder
         transformer_output = F.leaky_relu(self.transformer_encoder(embedded_states))
 
-        # Compute attention scores
+        # Compute attention scores for the transformer outputs
         attention_scores = F.softmax(self.attention_linear(transformer_output), dim=1)
 
         # Apply attention pooling over the transformer output

@@ -130,6 +130,7 @@ class ValueNetworkTransformer(nn.Module):
 
         # Positional embedding layer
         self.position_embedding = nn.Embedding(stack_size, hidden_size).to(device)
+        self.positional_encodings = self.create_positional_encodings(stack_size, hidden_size).to(device)
 
         # Transformer Encoder Layers
         encoder_layers = nn.TransformerEncoderLayer(d_model=self.hidden_size, nhead=nhead, batch_first=True, dropout=0).to(device)
@@ -142,6 +143,30 @@ class ValueNetworkTransformer(nn.Module):
         self.value_output = nn.Linear(hidden_size, 1).to(device)
 
         self.to(self.device)
+    
+    @staticmethod
+    def create_positional_encodings(seq_len: int, d_model: int):
+        """Creates positional encodings for the Transformer model.
+
+        Args:
+            seq_len: The sequence length.
+            d_model: The dimension of the embeddings (i.e., model dimension).
+
+        Returns:
+            A tensor containing the positional encodings.
+        """
+        pos = torch.arange(seq_len, dtype=torch.float32).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, d_model, 2).float() * -(math.log(10000.0) / d_model))
+
+        pos_enc = torch.zeros(seq_len, d_model)
+        pos_enc[:, 0::2] = torch.sin(pos * div_term)
+        if d_model % 2 == 1:
+            # For odd dimension models, compute one extra term for the cosine function
+            pos_enc[:, 1::2] = torch.cos(pos * div_term[:-1])
+        else:
+            pos_enc[:, 1::2] = torch.cos(pos * div_term)
+
+        return pos_enc
 
     def forward(self, state: torch.Tensor):
         # Add a singleton dimension for num_samples if necessary
@@ -155,6 +180,9 @@ class ValueNetworkTransformer(nn.Module):
 
         # Pass the states through the embedding layer
         embedded_states = self.embedding(state)
+
+        # Alternative method for positional encodings
+        # embedded_states = self.positional_encodings + embedded_states
 
         # Create and add positional embeddings to states
         positions = torch.arange(self.stack_size, device=self.device).expand(num_envs * num_samples, self.stack_size)

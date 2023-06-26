@@ -128,8 +128,8 @@ class PPO2(Agent):
         
         # Optimizers and schedulers
         self.use_lr_scheduler = True
-        self.lr_scheduler_constant_steps = 1000
-        self.lr_scheduler_max_steps = 10000
+        self.lr_scheduler_constant_steps = 5000
+        self.lr_scheduler_max_steps = 500000
         self.lr_scheduler_max_factor = 1.0
         self.lr_scheduler_min_factor = 1.0 / 10.0
 
@@ -264,7 +264,7 @@ class PPO2(Agent):
 
                 # Compute policy distribution parameters
                 loc, scale = self.actor(mb_states)
-                dist = Normal(loc.squeeze(), scale.squeeze())
+                dist = Normal(loc, scale)
                 log_probs = dist.log_prob(mb_actions).sum(dim=-1)
 
                 # Compute entropy bonus
@@ -300,8 +300,8 @@ class PPO2(Agent):
 
                     # Perform a single optimization step, clip gradients before step
                     clip_grad_norm_(self.optimizers["combined"].param_groups[0]['params'], self.hyperparams.max_grad_norm)
-                    self.optimizers["combined_scheduler"].step()
                     self.optimizers["combined"].step()
+                    self.optimizers["combined_scheduler"].step()
 
                     # Clear the gradients
                     self.optimizers["combined"].zero_grad()
@@ -322,12 +322,12 @@ class PPO2(Agent):
                     
                     clip_grad_norm_(self.optimizers["actor"].param_groups[0]['params'], self.max_grad_norm)
                     clip_grad_norm_(self.optimizers["critic"].param_groups[0]['params'], self.max_grad_norm)
-
-                    self.optimizers["actor_scheduler"].step()
-                    self.optimizers["critic_scheduler"].step()
                     
                     self.optimizers['actor'].step()
                     self.optimizers['critic'].step()
+
+                    self.optimizers["actor_scheduler"].step()
+                    self.optimizers["critic_scheduler"].step()
                     
                     self.optimizers['critic'].zero_grad()
                     self.optimizers['actor'].zero_grad()
@@ -413,8 +413,7 @@ class PPO2(Agent):
                     )
                 }
         else:
-            return self.optimizers
-        
+            return self.optimizers     
 
     def state_dict(self)-> Dict[str,Dict]:
         return {
