@@ -103,11 +103,11 @@ class PPO2(Agent):
             self.actor = GaussianGradientTransformerPolicy(
                 self.state_size, 
                 self.num_actions, 
-                self.hidden_size,
+                self.hidden_size // 2,
                 device=device
             )
             
-            self.critic = ValueNetworkTransformerV1(
+            self.critic = ValueNetworkTransformer(
                 self.state_size, 
                 self.hidden_size, 
                 device=device
@@ -126,9 +126,17 @@ class PPO2(Agent):
         else:
             raise NotImplementedError
         
+        # Optimizers and schedulers
+        self.optimizers = None
         self.optimizers = self.get_optimizers()
         self.update_count = 0
+        self.use_lr_scheduler = True,
+        self.lr_scheduler_constant_steps = 1000
+        self.lr_scheduler_max_steps = 10000
+        self.lr_scheduler_max_factor = 1.0
+        self.lr_scheduler_min_factor = 1.0 / 10.0
 
+        # Normaliers
         self.reward_normalizer = Normalizer(device=device)
         self.advantage_normalizer = Normalizer(device=device)
 
@@ -178,13 +186,13 @@ class PPO2(Agent):
 
         # Compute bootstrapped targets by adding unnormalized advantages to values 
         targets = values + advantages
+        # advantages = self.advantage_normalizer.update(advantages)
         return targets, advantages
 
-    def learn(self, batch: list[Transition], num_envs: int, batch_size: int, num_rounds: int = 4, mini_batch_size: int = 512) -> dict[str, Tensor]:
+    def learn(self, batch: list[Transition], num_envs: int, batch_size: int, num_rounds: int = 8, mini_batch_size: int = 128) -> dict[str, Tensor]:
         self.update_count += 1
 
         # Reshape batch to gathered lists
-        # with torch.no_grad():
         states, actions, next_states, rewards, dones, truncs, prev_log_probs = map(torch.stack, zip(*batch))
 
         # Reshape and send to device
@@ -282,6 +290,7 @@ class PPO2(Agent):
                     loss_value = F.smooth_l1_loss(predicted_values.squeeze(), mb_targets.squeeze())
 
                 if self.hyperparams.combined_optimizer:
+                    
                     # Combine the losses 
                     total_loss = ((self.hyperparams.policy_loss_weight * loss_policy) - (self.hyperparams.entropy_coefficient * entropy)) + (self.hyperparams.value_loss_weight * loss_value)
 
@@ -290,6 +299,7 @@ class PPO2(Agent):
 
                     # Perform a single optimization step, clip gradients before step
                     clip_grad_norm_(self.optimizers["combined"].param_groups[0]['params'], self.hyperparams.max_grad_norm)
+                    self.optimizers["combined_scheduler"].step()
                     self.optimizers["combined"].step()
 
                     # Clear the gradients
@@ -309,9 +319,11 @@ class PPO2(Agent):
                     loss_value.backward()
                     loss_policy_with_entropy_bonus.backward()
                     
-                    
                     clip_grad_norm_(self.optimizers["actor"].param_groups[0]['params'], self.max_grad_norm)
                     clip_grad_norm_(self.optimizers["critic"].param_groups[0]['params'], self.max_grad_norm)
+
+                    self.optimizers["actor_scheduler"].step()
+                    self.optimizers["critic_scheduler"].step()
                     
                     self.optimizers['actor'].step()
                     self.optimizers['critic'].step()
@@ -355,30 +367,54 @@ class PPO2(Agent):
 
     def get_optimizers(self) -> Dict[str, Optimizer | lr_scheduler.LRScheduler]:
 
-        if self.hyperparams.combined_optimizer:
-        
-            # self.scheduler = torch.optim.lr_scheduler.LambdaLR(
-            #     self.optimizer, 
-            #     lr_lambda=self.create_lr_lambda(
-            #         1.0,  # Maximum multiplicative factor
-            #         1.0 / 20.0,  # Minimum multiplicative factor
-            #         5000,
-            #         100000
-            #     )
-            # )
-
-            return {
-                "combined": AdamW(
+        if self.optimizers == None:
+            if self.hyperparams.combined_optimizer:
+                optimizer = AdamW(
                     chain(self.actor.parameters(), self.critic.parameters()), 
                     lr=self.hyperparams.policy_learning_rate
                 )
-            }
-        
+
+                return {
+                    "combined": optimizer,
+                    "combined_scheduler": torch.optim.lr_scheduler.LambdaLR(
+                        optimizer, 
+                        lr_lambda=self.create_lr_lambda(
+                            self.lr_scheduler_max_factor,  # Maximum multiplicative factor
+                            self.lr_scheduler_min_factor,  # Minimum multiplicative factor
+                            self.lr_scheduler_constant_steps,
+                            self.lr_scheduler_max_steps
+                        )
+                    )
+                }
+            else:
+                actor_optimizer = AdamW(self.actor.parameters(), lr=self.hyperparams.policy_learning_rate)
+                critic_optimizer = AdamW(self.critic.parameters(), lr=self.hyperparams.value_learning_rate)
+
+                return {
+                    "actor": actor_optimizer,
+                    "critic": critic_optimizer,
+                    "actor_scheduler": torch.optim.lr_scheduler.LambdaLR(
+                        actor_optimizer, 
+                        lr_lambda=self.create_lr_lambda(
+                            self.lr_scheduler_max_factor,  # Maximum multiplicative factor
+                            self.lr_scheduler_min_factor,  # Minimum multiplicative factor
+                            self.lr_scheduler_constant_steps,
+                            self.lr_scheduler_max_steps
+                        )
+                    ),
+                    "critic_scheduler": torch.optim.lr_scheduler.LambdaLR(
+                        critic_optimizer, 
+                        lr_lambda=self.create_lr_lambda(
+                            self.lr_scheduler_max_factor,  # Maximum multiplicative factor
+                            self.lr_scheduler_min_factor,  # Minimum multiplicative factor
+                            self.lr_scheduler_constant_steps,
+                            self.lr_scheduler_max_steps
+                        )
+                    )
+                }
         else:
-            return {
-                "actor": AdamW(self.actor.parameters(), lr=self.hyperparams.policy_learning_rate),
-                "critic": AdamW(self.critic.parameters(), lr=self.hyperparams.value_learning_rate),
-            }
+            return self.optimizers
+        
 
     def state_dict(self)-> Dict[str,Dict]:
         return {
@@ -637,7 +673,6 @@ class A2C(Agent):
     def load(self, location: str)->None:
         state_dicts = torch.load(location)
         self.actor.load_state_dict(state_dicts["actor"])
-
 
 class REINFORCE(Agent):
     def __init__(

@@ -15,7 +15,7 @@ from brax.v1 import jumpy as jp
 import brax.v1.envs as envs
 from datetime import datetime
 
-def convert_brax_to_gym(name: str, frame_stack: bool = True, stack_size: int = 16, **kwargs):
+def convert_brax_to_gym(name: str, frame_stack: bool = True, stack_size: int = 32, **kwargs):
     device = torch.device(
         "mps" if torch.has_mps else "cpu" or # MACOS
         "cuda" if torch.has_cuda else 
