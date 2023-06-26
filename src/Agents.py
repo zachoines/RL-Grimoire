@@ -355,7 +355,17 @@ class PPO2(Agent):
             "Entropy": total_entropy,
             "Advantages" : advantages_all.mean(),
             "Train Rewards": rewards.mean(),
-            "Total Batch Rewards": batch_rewards.sum()
+            "Total Batch Rewards": batch_rewards.sum(),
+            **(
+                { 
+                    "Combined RL Scheduler": to_tensor(self.optimizers["combined_scheduler"].get_last_lr()[0]) 
+                } 
+                if self.hyperparams.combined_optimizer else 
+                {
+                    "Actor RL Scheduler" : to_tensor(self.optimizers["actor_scheduler"].get_last_lr()[0]),
+                    "Critic RL Scheduler" : to_tensor(self.optimizers["critic_scheduler"].get_last_lr()[0])
+                }
+            ),
         }
 
     def create_lr_lambda(self):
