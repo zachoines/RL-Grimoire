@@ -407,14 +407,14 @@ class PPO2HumanoidStandupConfig(Config):
                 clipped_value_loss_eps = 0.2, # Used when value_loss_clipping is enabled
                 value_loss_clipping = False, 
                 gamma = 0.99,
-                policy_learning_rate = 2.5e-4,
-                value_learning_rate = 5e-4, # Deactivated when "combined_optimizer" enabled
+                policy_learning_rate = 1e-3,
+                value_learning_rate = 5e-3, # Deactivated when "combined_optimizer" enabled
                 entropy_coefficient = 0.02,
                 hidden_size = 128,
                 gae_lambda = 0.95,
                 value_loss_weight = 0.5, # Activated when "combined_optimizer" enabled
                 max_grad_norm = 0.5,
-                use_moving_average_reward = False,
+                use_moving_average_reward = True,
                 combined_optimizer = False
             ),
             TrainerParams(

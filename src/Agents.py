@@ -127,15 +127,16 @@ class PPO2(Agent):
             raise NotImplementedError
         
         # Optimizers and schedulers
-        self.optimizers = None
-        self.optimizers = self.get_optimizers()
-        self.update_count = 0
-        self.use_lr_scheduler = True,
+        self.use_lr_scheduler = True
         self.lr_scheduler_constant_steps = 1000
         self.lr_scheduler_max_steps = 10000
         self.lr_scheduler_max_factor = 1.0
         self.lr_scheduler_min_factor = 1.0 / 10.0
 
+        self.optimizers = None
+        self.optimizers = self.get_optimizers()
+        self.update_count = 0
+        
         # Normaliers
         self.reward_normalizer = Normalizer(device=device)
         self.advantage_normalizer = Normalizer(device=device)
@@ -357,7 +358,11 @@ class PPO2(Agent):
             "Total Batch Rewards": batch_rewards.sum()
         }
 
-    def create_lr_lambda(self, initial_lr: float, final_lr: float, constant_steps: int, max_steps: int):
+    def create_lr_lambda(self):
+        initial_lr = self.lr_scheduler_max_factor
+        final_lr = self.lr_scheduler_min_factor
+        constant_steps = self.lr_scheduler_constant_steps
+        max_steps = self.lr_scheduler_max_steps
         return lambda step: (
             initial_lr if step < constant_steps 
             else initial_lr - ((min(step, max_steps) - constant_steps) / (max_steps - constant_steps)) * (initial_lr - final_lr) 
@@ -378,12 +383,7 @@ class PPO2(Agent):
                     "combined": optimizer,
                     "combined_scheduler": torch.optim.lr_scheduler.LambdaLR(
                         optimizer, 
-                        lr_lambda=self.create_lr_lambda(
-                            self.lr_scheduler_max_factor,  # Maximum multiplicative factor
-                            self.lr_scheduler_min_factor,  # Minimum multiplicative factor
-                            self.lr_scheduler_constant_steps,
-                            self.lr_scheduler_max_steps
-                        )
+                        lr_lambda=self.create_lr_lambda()
                     )
                 }
             else:
@@ -395,21 +395,11 @@ class PPO2(Agent):
                     "critic": critic_optimizer,
                     "actor_scheduler": torch.optim.lr_scheduler.LambdaLR(
                         actor_optimizer, 
-                        lr_lambda=self.create_lr_lambda(
-                            self.lr_scheduler_max_factor,  # Maximum multiplicative factor
-                            self.lr_scheduler_min_factor,  # Minimum multiplicative factor
-                            self.lr_scheduler_constant_steps,
-                            self.lr_scheduler_max_steps
-                        )
+                        lr_lambda=self.create_lr_lambda()
                     ),
                     "critic_scheduler": torch.optim.lr_scheduler.LambdaLR(
                         critic_optimizer, 
-                        lr_lambda=self.create_lr_lambda(
-                            self.lr_scheduler_max_factor,  # Maximum multiplicative factor
-                            self.lr_scheduler_min_factor,  # Minimum multiplicative factor
-                            self.lr_scheduler_constant_steps,
-                            self.lr_scheduler_max_steps
-                        )
+                        lr_lambda=self.create_lr_lambda()
                     )
                 }
         else:
