@@ -105,13 +105,13 @@ class Trainer:
             if self.state.__class__ == np.ndarray:
                 self.state = to_tensor(self.state, device=self.device)
             
-            action, other = self.agent.get_actions(self.state, self.dones)
+            action, *other = self.agent.get_actions(self.state, self.dones)
             action = action.cpu()
             action = self.train_params.preprocess_action(action)
             next_state, reward, done, trunc, _ = self.env.step(action)
         
             # Convert to tensor if not
-            other = to_tensor(other, device=self.device)
+            other_tensors = [to_tensor(o, device=self.device) for o in other]
             action = to_tensor(action, device=self.device)
             next_state = to_tensor(next_state, device=self.device)
             reward = to_tensor(reward, device=self.device)
@@ -125,9 +125,10 @@ class Trainer:
             self.writer.add_scalar(tag="Step Rewards", scalar_value=reward.mean(), global_step=self.current_step) # type: ignore
             
             if self.train_params.batch_transitions_by_env_trajectory:
-                self.exp_buffer.append([Transition(self.state, action, next_state, reward, done, trunc, other)])
+                self.exp_buffer.append([(self.state, action, next_state, reward, done, trunc, *other_tensors)])
             else:
-                self.exp_buffer.append([Transition(s, a, n_s, r, d, t, o) for s, a, n_s, r, d, t, o in zip(self.state, action, next_state, reward, done, trunc, other)]) # type: ignore
+                self.exp_buffer.append([Transition(s, action, n_s, r, d, t, o) for s, n_s, r, d, t, o in zip(self.state, next_state, reward, done, trunc, *other_tensors)]) # type: ignore
+        
             self.state = next_state
 
 

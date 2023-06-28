@@ -98,23 +98,47 @@ class PPO2Params(PPOParams):
                  log_std_max: float = 2.0, 
                  policy_loss_weight: float = 1.0, 
                  value_loss_weight: float = .5, 
-                 use_moving_average_reward: bool = True, 
-                 reward_ema_coefficient: float = 0.99,
+                 use_moving_average_reward: bool = True,
                  combined_optimizer: bool = False,
                  value_loss_clipping: bool = True,
                  clipped_value_loss_eps: float = 0.2,
+                 mini_batch_size: int = 64,
+                 num_rounds: int = 4,
+                 use_lr_scheduler: bool = False,
+                 lr_scheduler_constant_steps: int = 5000,
+                 lr_scheduler_max_steps: int = 150000,
+                 lr_scheduler_max_factor: float = 1.0,
+                 lr_scheduler_min_factor: float = 1.0 / 10.0,
                  *args, **kwargs):
         super().__init__(*args, **kwargs)
+
+        # misc
         self.gae_lambda = gae_lambda
         self.log_std_min = log_std_min
         self.log_std_max = log_std_max
+        self.use_moving_average_reward = use_moving_average_reward
+        
+        # Optimizer parameters
         self.policy_loss_weight = policy_loss_weight
         self.value_loss_weight = value_loss_weight
-        self.use_moving_average_reward = use_moving_average_reward
-        self.reward_ema_coefficient = reward_ema_coefficient
         self.combined_optimizer = combined_optimizer
+
+        # Loss parmeters
         self.clipped_value_loss_eps = clipped_value_loss_eps
         self.value_loss_clipping = value_loss_clipping
+
+        # PPO specific training params
+        self.mini_batch_size = mini_batch_size
+        self.num_rounds = num_rounds
+
+        # Learning rate scheduler
+        self.use_lr_scheduler = use_lr_scheduler
+        self.lr_scheduler_constant_steps = lr_scheduler_constant_steps
+        self.lr_scheduler_max_steps = lr_scheduler_max_steps
+        self.lr_scheduler_max_factor = lr_scheduler_max_factor
+        self.lr_scheduler_min_factor = lr_scheduler_min_factor
+        
+        # Class name
         self.agent_name = "PPO2"
 
 class PPO2RecurrentParams(PPO2Params):

@@ -398,22 +398,22 @@ class PPO2BraxSwimmerConfig(Config):
 
 class PPO2HumanoidStandupConfig(Config):
     def __init__(self):
-        self.max_episode_steps = 1024
-        self.num_envs = 256
+        self.max_episode_steps = 512
+        self.num_envs = 1024
 
         super().__init__(
             PPO2Params(
                 clip = 0.2,
                 clipped_value_loss_eps = 0.2, # Used when value_loss_clipping is enabled
                 value_loss_clipping = False, 
-                gamma = 0.99,
-                policy_learning_rate = 7e-4,
-                value_learning_rate = 1e-3, # Deactivated when "combined_optimizer" enabled
-                entropy_coefficient = 0.02,
-                hidden_size = 128,
-                gae_lambda = 0.95,
+                gamma = 0.97,
+                policy_learning_rate = 2.5e-4,
+                value_learning_rate = 5e-4, # Deactivated when "combined_optimizer" enabled
+                entropy_coefficient = 0.05,
+                hidden_size = 256,
+                gae_lambda = .95,
                 value_loss_weight = 0.5, # Activated when "combined_optimizer" enabled
-                max_grad_norm = 0.5,
+                max_grad_norm = 1.0,
                 use_moving_average_reward = True,
                 combined_optimizer = False
             ),
@@ -421,7 +421,7 @@ class PPO2HumanoidStandupConfig(Config):
                 batch_transitions_by_env_trajectory = True, # Must be enabled for PPO
                 num_epochs = 2000,
                 batches_per_epoch = 1,
-                batch_size = 16,
+                batch_size = 12,
                 updates_per_batch = 1,
                 shuffle_batches = False, # False to not interfere with GAE creation
                 save_location = "./saved_models/HumanoidStandupPPO2"
@@ -492,7 +492,7 @@ class PPO2BraxHopperConfig(Config):
 class PPO2BraxAntConfig(Config):
     def __init__(self):
         self.max_episode_steps = 1024
-        self.num_envs = 32
+        self.num_envs = 1024
 
         super().__init__(
             PPO2Params(
@@ -501,20 +501,22 @@ class PPO2BraxAntConfig(Config):
                 value_loss_clipping = False, 
                 gamma = 0.99,
                 policy_learning_rate = 2.5e-4,
-                value_learning_rate = 1e-3, # Deactivated when "combined_optimizer" enabled
+                value_learning_rate = 4e-4, # Deactivated when "combined_optimizer" enabled
                 entropy_coefficient = 0.08,
                 hidden_size = 128,
                 gae_lambda = 0.5,
                 value_loss_weight = 0.5, # Activated when "combined_optimizer" enabled
                 max_grad_norm = 1.0,
-                use_moving_average_reward = False,
-                combined_optimizer = False
+                use_moving_average_reward = True,
+                combined_optimizer = False,
+                mini_batch_size=1024,
+                num_rounds=8
             ),
             TrainerParams(
                 batch_transitions_by_env_trajectory = True, # Must be enabled for PPO
                 num_epochs = 2000,
                 batches_per_epoch = 1,
-                batch_size = 32,
+                batch_size = 12,
                 updates_per_batch = 1,
                 shuffle_batches = False,
                 save_location = "./saved_models/AntPPO"
@@ -528,12 +530,58 @@ class PPO2BraxAntConfig(Config):
                 misc_arguments = {
                     "batch_size": self.num_envs, # Brax's convention uses batch_size for num_environments
                     "episode_length": self.max_episode_steps,
-                    "healthy_reward": 0.50, # 1.00,
-                    "ctrl_cost_weight": 0.25, # .5,
-                    "contact_cost_weight": 2.5e-4, # 5e-4,
+                    "healthy_reward": 1.00,
+                    "ctrl_cost_weight": 0.5,
+                    "contact_cost_weight": 5e-4,
                     "use_contact_forces": False,
                     "terminate_when_unhealthy": True
                 }
             )
         )
 
+class PPO2HumanoidStandupRecurrentConfig(Config):
+    def __init__(self):
+        self.max_episode_steps = 512
+        self.num_envs = 256
+
+        super().__init__(
+            PPO2RecurrentParams(
+                clip = 0.1,
+                clipped_value_loss_eps = 0.2, # Used when value_loss_clipping is enabled
+                value_loss_clipping = False, 
+                gamma = 0.97,
+                policy_learning_rate = 1e-4,
+                value_learning_rate = 1e-4, # Deactivated when "combined_optimizer" enabled
+                entropy_coefficient = 0.05,
+                hidden_size = 256,
+                gae_lambda = .95,
+                value_loss_weight = 0.5, # Activated when "combined_optimizer" enabled
+                max_grad_norm = .5,
+                use_moving_average_reward = False,
+                combined_optimizer = False,
+                mini_batch_size = 64,
+                num_rounds = 4
+            ),
+            TrainerParams(
+                batch_transitions_by_env_trajectory = True, # Must be enabled for PPO
+                num_epochs = 2000,
+                batches_per_epoch = 1,
+                batch_size = 256,
+                updates_per_batch = 1,
+                shuffle_batches = False, # False to not interfere with GAE creation
+                save_location = "./saved_models/HumanoidStandupPPO2"
+            ),
+            EnvParams(
+                env_name = "brax-humanoid-standup",
+                env_normalization=True,
+                num_envs = self.num_envs,
+                max_episode_steps = self.max_episode_steps,
+                vector_env=False, # Brax will init 'n' environments on its side
+                misc_arguments = {
+                    "batch_size": self.num_envs, # Brax's convention uses batch_size for num_environments
+                    "episode_length": self.max_episode_steps,
+                    "action_repeat": 1,
+                    "legacy_spring": False
+                }
+            )
+        )

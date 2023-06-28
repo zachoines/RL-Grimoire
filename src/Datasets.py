@@ -1,7 +1,7 @@
 import random
 from collections import namedtuple
 
-Transition = namedtuple('Transition', ('state', 'action', 'next_state', 'reward', 'done', 'trunc', 'other'))
+Transition = tuple
 
 class ExperienceBuffer:
     def __init__(self, capacity = 1000000):
