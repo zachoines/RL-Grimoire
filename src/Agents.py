@@ -478,8 +478,8 @@ class PPO2Recurrent(Agent):
 
     def get_actions(self, state: torch.Tensor, dones: torch.Tensor, eval=False)->tuple[Tensor, Tensor]:
         if self.is_continous():
-            mean, std, _ = self.actor(state, dones=dones)
-            value, _ = self.critic(state, dones=dones)
+            mean, std, _ = self.actor(state.unsqueeze(0), dones=dones)
+            value, _ = self.critic(state.unsqueeze(0), dones=dones)
             critic_hidden, policy_hidden = self.critic.get_prev_hidden(), self.actor.get_prev_hidden()
             mean, std = torch.squeeze(mean), torch.squeeze(std)
             value = torch.squeeze(value)
@@ -532,43 +532,41 @@ class PPO2Recurrent(Agent):
         num_rounds = self.hyperparams.num_rounds
         mini_batch_size = self.hyperparams.mini_batch_size
 
-        # Reshape batch to gathered lists
-        states, actions, next_states, rewards, dones, truncs, prev_log_probs, policy_hidden, critic_hidden, values = map(
-            torch.stack, zip(*batch)
-        )
-
-        # Reshape and send to device
-        states = states.to(device=self.device, dtype=torch.float32).contiguous()
-        next_states = next_states.to(device=self.device, dtype=torch.float32).contiguous()
-        actions = actions.to(device=self.device, dtype=torch.float32).contiguous()
-        dones = dones.permute((1, 0)).to(device=self.device, dtype=torch.float32).contiguous()
-        truncs = truncs.permute((1, 0)).to(device=self.device, dtype=torch.float32).contiguous()
-        prev_log_probs = prev_log_probs.to(device=self.device, dtype=torch.float32).contiguous()
-        rewards = rewards.permute((1, 0)).to(device=self.device, dtype=torch.float32).contiguous()
-        values = values.permute((1, 0)).to(device=self.device, dtype=torch.float32).contiguous()
-
-        policy_hidden = policy_hidden.to(device=self.device).squeeze().contiguous()
-        critic_hidden = critic_hidden.to(device=self.device).squeeze().contiguous()
-
-        batch_rewards = rewards.clone()
-
-        # Update running mean and variance and normalize rewards
-        if self.hyperparams.use_moving_average_reward:
-            rewards = self.reward_normalizer.update(rewards)
-
-        # Compute values for states and next states
         with torch.no_grad():
-            _, next_hiddens = self.critic(states[-1:, :], critic_hidden[-1, :].unsqueeze(0))
-            last_next_value, _ = self.critic(next_states[-1:, :], next_hiddens)  # Get the next value for the last next state
+             # Reshape batch to gathered lists
+            states, actions, next_states, rewards, dones, truncs, prev_log_probs, policy_hidden, critic_hidden, values = map(
+                torch.stack, zip(*batch)
+            )
 
-            # Concatenate values and the last next value
+            # Reshape and send to device
+            states = states.to(device=self.device, dtype=torch.float32).contiguous()
+            next_states = next_states.to(device=self.device, dtype=torch.float32).contiguous()
+            actions = actions.to(device=self.device, dtype=torch.float32).contiguous()
+            dones = dones.to(device=self.device, dtype=torch.float32).contiguous()
+            truncs = truncs.permute((1, 0)).to(device=self.device, dtype=torch.float32).contiguous()
+            prev_log_probs = prev_log_probs.to(device=self.device, dtype=torch.float32).contiguous()
+            rewards = rewards.permute((1, 0)).to(device=self.device, dtype=torch.float32).contiguous()
+            values = values.permute((1, 0)).to(device=self.device, dtype=torch.float32).contiguous()
+
+            policy_hidden = policy_hidden.to(device=self.device).contiguous()
+            critic_hidden = critic_hidden.to(device=self.device).contiguous()
+
+            batch_rewards = rewards.clone()
+
+            # Update running mean and variance and normalize rewards
+            if self.hyperparams.use_moving_average_reward:
+                rewards = self.reward_normalizer.update(rewards)
+
+            # Compute values for states and next states
+            _, next_hidden = self.critic(states[-1:, :], critic_hidden[-1, :].unsqueeze(0), dones=dones[-1:, :])
+            last_next_value, _ = self.critic(next_states[-1:, :], next_hidden.unsqueeze(0), dones=torch.zeros_like(dones[-1:, :]))  # Get the next value for the last next state
             next_values_minus_last = values[:, 1:]
-            next_values = torch.cat((next_values_minus_last, last_next_value), dim=1)
+            next_values = torch.cat((next_values_minus_last, last_next_value.view(num_envs, 1)), dim=1)
 
             # Calculate advantages with GAE
             targets, advantages_all = self.compute_gae_and_targets(
                 rewards.unsqueeze(-1),
-                dones.unsqueeze(-1),
+                dones.permute((1, 0)).unsqueeze(-1),
                 truncs.unsqueeze(-1),
                 values.unsqueeze(-1),
                 next_values.unsqueeze(-1),
@@ -612,9 +610,10 @@ class PPO2Recurrent(Agent):
                     mb_targets = targets[ids]
                     mb_policy_hidden = policy_hidden[ids]
                     mb_critic_hidden = critic_hidden[ids]
+                    mb_dones = dones[ids]
 
                 # Compute policy distribution parameters
-                loc, scale, mb_policy_hidden = self.actor(mb_states, mb_policy_hidden[0, :].unsqueeze(0))
+                loc, scale, _ = self.actor(mb_states, mb_policy_hidden, dones=mb_dones)
                 dist = Normal(loc, scale)
                 log_probs = dist.log_prob(mb_actions).sum(dim=-1)
 
@@ -631,8 +630,8 @@ class PPO2Recurrent(Agent):
                 )
 
                 # Compute the value loss with clipping
-                predicted_values, _ = self.critic(mb_states, mb_critic_hidden[0, :].unsqueeze(0))
-                loss_value = F.smooth_l1_loss(predicted_values, mb_targets)
+                predicted_values, _ = self.critic(mb_states, mb_critic_hidden, dones=mb_dones)
+                loss_value = F.smooth_l1_loss(predicted_values.squeeze(), mb_targets.squeeze())
 
                 if self.hyperparams.combined_optimizer:
 

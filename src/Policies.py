@@ -268,17 +268,13 @@ class GaussianGradientTransformerPolicy(nn.Module):
 
         return means, stds
 
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-
 class GaussianGradientGRUPolicy(nn.Module):
     def __init__(
             self, 
             in_features: int, 
             out_features: int, 
             hidden_size: int, 
-            num_layers=1,
+            num_layers = 2,
             device: torch.device = torch.device("cpu")
     ):
         super().__init__()
@@ -315,7 +311,11 @@ class GaussianGradientGRUPolicy(nn.Module):
         self.hidden = None  # Hidden state
         self.prev_hidden = None  # Previous hidden state
 
-        self.init_weights()
+        # self.init_weights()
+
+    def init_hidden(self, batch_size: int):
+        """Initialize the hidden state for a new batch."""
+        self.hidden = torch.zeros(self.num_layers, batch_size, self.hidden_size).to(self.device).contiguous()
 
     def get_hidden(self):
         """Return the current hidden state."""
@@ -342,44 +342,40 @@ class GaussianGradientGRUPolicy(nn.Module):
                     elif 'bias' in name:
                         nn.init.constant_(param, 0.0)
 
-    def forward(self, x, hidden=None, dones=None):
-        # Add a singleton dimension for num_samples if necessary
-        if len(x.size()) == 2:
-            x = x.unsqueeze(0)
+    def forward(self, x, input_hidden=None, dones=None):
+        seq_length, batch_size, *_ = x.size() 
 
-        _, batch_size, _ = x.size()
+        # Enforce internal hidden state
+        if self.hidden is None or self.hidden.size(2) != batch_size:
+            self.init_hidden(batch_size)
 
+        # Pass through shared net 
         shared_features = self.shared_net(x.to(self.device))
 
-        set_hidden: bool = False
-        if self.hidden is None or self.hidden.size(1) != batch_size:
-            self.hidden = torch.zeros(self.num_layers, batch_size, self.hidden_size).to(self.device).contiguous()
-            set_hidden = True
-        elif hidden is not None:
-            self.hidden = hidden
-            set_hidden = True
+        # Process each sequence step, taking dones into consideration
+        gru_outputs = []
 
-        if dones is not None:
-            # Reset hidden state for environments that are done
-            mask = torch.tensor(dones, dtype=torch.bool, device=self.device)
-            self.hidden[:, mask, :] = 0.0
-            set_hidden = mask.any().item()
+        if dones is not None: # TODO: check if "and torch.any(dones):" works
+            for t in range(seq_length):
+                
+                # Set the hidden state
+                self.hidden = input_hidden[t, :] if input_hidden is not None else self.hidden  
+                
+                # Reset hidden state for environments that are done
+                mask = dones[t].to(dtype=torch.bool, device=self.device)
+                self.hidden[:, mask, :] = 0.0
 
-        self.prev_hidden = self.hidden.clone()  # Save the previous hidden state
-
-        if set_hidden:
-            gru_output, self.hidden = self.gru(shared_features, self.hidden)
+                self.prev_hidden = self.hidden
+                gru_output, self.hidden = self.gru(shared_features[t].unsqueeze(0), self.hidden.clone())
+                gru_outputs.append(gru_output)
+            gru_outputs = torch.stack(gru_outputs)
         else:
-            gru_output, self.hidden = self.gru(shared_features)
+            self.hidden = input_hidden if input_hidden is not None else self.hidden
+            self.prev_hidden = self.hidden
+            gru_outputs, self.hidden = self.gru(shared_features, self.hidden)
 
-        means = self.mean(F.leaky_relu(gru_output))
-        stds = self.std(F.leaky_relu(gru_output))
+        means = self.mean(gru_output)
+        stds = self.std(gru_output)
         stds = torch.clamp(stds, min=self.min_std_value)
-
-        has_nan = torch.any(torch.isnan(means)) or torch.any(torch.isnan(stds))
-        if has_nan:
-            # Handle NaN values if needed
-            means = torch.zeros_like(means)
-            stds = torch.ones_like(stds)
 
         return means, stds, self.hidden
