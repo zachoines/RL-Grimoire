@@ -542,27 +542,79 @@ class PPO2BraxAntConfig(Config):
 class PPO2HumanoidStandupRecurrentConfig(Config):
     def __init__(self):
         self.max_episode_steps = 1024
-        self.num_envs = 2048
+        self.num_envs = 32
+        super().__init__(
+            PPO2RecurrentParams(
+                clip = 0.3,
+                clipped_value_loss_eps = 0.2, # Used when value_loss_clipping is enabled
+                value_loss_clipping = False, 
+                gamma = 0.97,
+                policy_learning_rate = 1e-3,
+                value_learning_rate = 1e-3, # Deactivated when "combined_optimizer" enabled
+                entropy_coefficient = 0.2,
+                hidden_size = 256,
+                gae_lambda = .95,
+                value_loss_weight = 0.5, # Activated when "combined_optimizer" enabled
+                max_grad_norm = 1.0,
+                use_moving_average_reward = True,
+                combined_optimizer = True,
+                mini_batch_size = 16,
+                num_rounds = 8,
+                use_lr_scheduler = True,
+                lr_scheduler_constant_steps = 200,
+                lr_scheduler_max_steps = 2000,
+                lr_scheduler_max_factor = 1.0,
+                lr_scheduler_min_factor = 1.0 / 100.0,
+            ),
+            TrainerParams(
+                batch_transitions_by_env_trajectory = True, # Must be enabled for PPO
+                num_epochs = 2000,
+                batches_per_epoch = 1,
+                batch_size = 256,
+                updates_per_batch = 1,
+                shuffle_batches = False, # False to not interfere with GAE creation
+                save_location = "./saved_models/HumanoidStandupPPO2"
+            ),
+            EnvParams(
+                env_name = "brax-humanoid-standup",
+                env_normalization=True,
+                num_envs = self.num_envs,
+                max_episode_steps = self.max_episode_steps,
+                vector_env=False, # Brax will init 'n' environments on its side
+                misc_arguments = {
+                    "batch_size": self.num_envs, # Brax's convention uses batch_size for num_environments
+                    "episode_length": self.max_episode_steps,
+                    "action_repeat": 1,
+                    "legacy_spring": False
+                }
+            )
+        )
+
+
+class PPO2HumanoidRecurrentConfig(Config):
+    def __init__(self):
+        self.max_episode_steps = 1024
+        self.num_envs = 1024
         super().__init__(
             PPO2RecurrentParams(
                 clip = 0.2,
                 clipped_value_loss_eps = 0.2, # Used when value_loss_clipping is enabled
                 value_loss_clipping = False, 
                 gamma = 0.99,
-                policy_learning_rate = 5e-4,
-                value_learning_rate = 1e-3, # Deactivated when "combined_optimizer" enabled
-                entropy_coefficient = 0.01,
+                policy_learning_rate = 1e-3,
+                value_learning_rate = 5e-4, # Deactivated when "combined_optimizer" enabled
+                entropy_coefficient = 0.2,
                 hidden_size = 256,
                 gae_lambda = .95,
                 value_loss_weight = 0.5, # Activated when "combined_optimizer" enabled
                 max_grad_norm = 1.0,
                 use_moving_average_reward = False,
                 combined_optimizer = False,
-                mini_batch_size = 16,
+                mini_batch_size = 8,
                 num_rounds = 8,
                 use_lr_scheduler = True,
-                lr_scheduler_constant_steps = 500,
-                lr_scheduler_max_steps = 5000,
+                lr_scheduler_constant_steps = 200,
+                lr_scheduler_max_steps = 2000,
                 lr_scheduler_max_factor = 1.0,
                 lr_scheduler_min_factor = 1.0 / 100.0,
             ),
@@ -573,10 +625,10 @@ class PPO2HumanoidStandupRecurrentConfig(Config):
                 batch_size = 128,
                 updates_per_batch = 1,
                 shuffle_batches = False, # False to not interfere with GAE creation
-                save_location = "./saved_models/HumanoidStandupPPO2"
+                save_location = "./saved_models/HumanoidPPO2"
             ),
             EnvParams(
-                env_name = "brax-humanoid-standup",
+                env_name = "brax-humanoid",
                 env_normalization=True,
                 num_envs = self.num_envs,
                 max_episode_steps = self.max_episode_steps,

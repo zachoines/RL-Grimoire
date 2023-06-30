@@ -7,8 +7,8 @@ import random
 from typing import Any, Union, List
 
 def clear_directories():
-    directories = ['videos', 'saved_models']
-    # directories = ['videos', 'runs', 'saved_models']
+    # directories = ['videos', 'saved_models']
+    directories = ['videos', 'runs', 'saved_models']
 
     for directory in directories:
         for root, _, files in os.walk(directory):
@@ -81,8 +81,7 @@ class Normalizer:
         data = data.to(self.device)  # Ensure data is on the correct device
         data_flattened = data.view(-1)  # Flatten the data tensor
         batch_size = data_flattened.shape[0]
-        self.t += batch_size  # Increment timestep by batch size
-
+        
         # Winsorize the data
         if self.device.type == 'cpu' or self.device.type.startswith('cuda'):
             lower = data_flattened.kthvalue(int(self.lower_percentile * batch_size)).values
@@ -93,14 +92,23 @@ class Normalizer:
             upper = sorted_data[int(self.upper_percentile * batch_size)]
         data_flattened = torch.clamp(data_flattened, lower, upper)
 
-        self.m = self.mean_decay_rate * self.m + (1 - self.mean_decay_rate) * data_flattened.mean()  # Update running mean
-        var_update = self.variance_decay_rate * self.v + (1 - self.variance_decay_rate) * data_flattened.var(unbiased=False)  # Compute running variance update
-        self.v = torch.max(var_update, to_tensor(self.eps, device=self.device, dtype=torch.float32))  # Update running variance, ensuring it's never less than eps
+        if self.t == 0:
+            # If this is the first batch, initialize the running mean and variance with the sample mean and variance
+            self.m = data_flattened.mean()
+            self.v = data_flattened.var(unbiased=False)
+        else:
+            # For subsequent batches, update the running mean and variance as before
+            self.m = self.mean_decay_rate * self.m + (1 - self.mean_decay_rate) * data_flattened.mean()  # Update running mean
+            var_update = self.variance_decay_rate * self.v + (1 - self.variance_decay_rate) * data_flattened.var(unbiased=False)  # Compute running variance update
+            self.v = torch.max(var_update, to_tensor(self.eps, device=self.device, dtype=torch.float32))  # Update running variance, ensuring it's never less than eps
+
+        self.t += batch_size  # Increment timestep by batch size
 
         m_hat = self.m / (1 - self.mean_decay_rate ** self.t)  # Bias-corrected mean estimate
         v_hat = self.v / (1 - self.variance_decay_rate ** self.t)  # Bias-corrected variance estimate
         data_norm = (data - m_hat) / (torch.sqrt(v_hat) + self.eps)  # Normalize data
         return data_norm
+
 
 class RunningMeanStd:
 
