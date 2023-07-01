@@ -99,14 +99,14 @@ class PPO2(Agent):
             self.action_min = float(self.action_space.low_repr) # type: ignore
             self.action_max = float(self.action_space.high_repr) # type: ignore
 
-            self.actor = GaussianGradientTransformerPolicy(
+            self.actor = GaussianGradientTransformerPolicyV1(
                 self.state_size, 
                 self.num_actions, 
-                self.hidden_size // 2,
+                self.hidden_size,
                 device=device
             )
             
-            self.critic = ValueNetworkTransformer(
+            self.critic = ValueNetworkTransformerV1(
                 self.state_size, 
                 self.hidden_size, 
                 device=device
@@ -221,14 +221,6 @@ class PPO2(Agent):
                 self.hyperparams.gae_lambda
             )
 
-        # Flatten states, actions, log probabilities, advantages, and targets
-        states = states.view(-1, states.size(-1))
-        old_values = old_values.view(-1) if self.hyperparams.value_loss_clipping else None
-        prev_log_probs = prev_log_probs.view(-1)
-        advantages_all = advantages_all.view(-1)
-        actions = actions.view(-1, actions.size(-1))
-        targets = targets.view(-1)
-
         # Initialize loss and entropy accumulators
         total_loss_combined, total_loss_actor, total_loss_critic, total_entropy = to_tensor(0, requires_grad=False), to_tensor(0, requires_grad=False), to_tensor(0, requires_grad=False), to_tensor(0, requires_grad=False)
 
@@ -236,24 +228,24 @@ class PPO2(Agent):
         for _ in range(num_rounds):
             
             # Generate a random order of mini-batches
-            mini_batch_start_indices = list(range(0, states.size(0), mini_batch_size))
+            mini_batch_start_indices = list(range(0, states.size(1), mini_batch_size))
             np.random.shuffle(mini_batch_start_indices)
             
             # Process each mini-batch
             for start_idx in mini_batch_start_indices:
                 
                 # Mini-batch indices
-                end_idx = min(start_idx + mini_batch_size, states.size(0))
+                end_idx = min(start_idx + mini_batch_size, states.size(1))
                 ids = slice(start_idx, end_idx)  # using a slice instead of a list of indices
 
                 # Extract mini-batch data
                 with torch.no_grad():
-                    mb_old_values = old_values[ids] if self.hyperparams.value_loss_clipping else None
-                    mb_states = states[ids]
-                    mb_actions = actions[ids]
-                    mb_old_log_probs = prev_log_probs[ids]
-                    mb_advantages = advantages_all[ids]
-                    mb_targets = torch.unsqueeze(targets[ids], dim=-1)
+                    mb_old_values = old_values[:, ids, :] if self.hyperparams.value_loss_clipping else None
+                    mb_states = states[:, ids, :]
+                    mb_actions = actions[:, ids, :]
+                    mb_old_log_probs = prev_log_probs[:, ids]
+                    mb_advantages = torch.squeeze(advantages_all[:, ids, :])
+                    mb_targets = targets[:, ids, :]
 
                 # Compute policy distribution parameters
                 loc, scale = self.actor(mb_states)
@@ -281,7 +273,7 @@ class PPO2(Agent):
                     loss_value2 = torch.square(clipped_values - mb_targets)
                     loss_value = 0.5 * torch.max(loss_value1, loss_value2).mean()
                 else:
-                    loss_value = F.smooth_l1_loss(predicted_values.squeeze(), mb_targets.squeeze())
+                    loss_value = F.smooth_l1_loss(predicted_values, mb_targets)
 
                 if self.hyperparams.combined_optimizer:
                     
@@ -442,21 +434,21 @@ class PPO2Recurrent(Agent):
             self.action_min = float(self.action_space.low_repr) # type: ignore
             self.action_max = float(self.action_space.high_repr) # type: ignore
 
-            self.actor = GaussianGradientGRUPolicy(
+            self.actor = GaussianGradientLSTMPolicy(
                 self.state_size, 
                 self.num_actions, 
-                self.hidden_size,
+                self.hidden_size // 2,
                 device=device
             )
             
-            self.critic = ValueNetworkGRU(
+            self.critic = ValueNetworkLSTM(
                 self.state_size, 
                 self.hidden_size, 
                 device=device
             )
 
             if self.hyperparams.value_loss_clipping:
-                self.old_critic = ValueNetworkGRU(
+                self.old_critic = ValueNetworkLSTM(
                     self.state_size, 
                     self.hidden_size, 
                     device=device
@@ -475,6 +467,8 @@ class PPO2Recurrent(Agent):
         
         # Normaliers
         self.reward_normalizer = Normalizer(device=device)
+        self.value_normalizer = Normalizer(device=device)
+        self.advantage_normalizer = Normalizer(device=device)
 
     def get_actions(self, state: torch.Tensor, dones: torch.Tensor, eval=False)->tuple[Tensor, Tensor]:
         if self.is_continous():
@@ -524,6 +518,8 @@ class PPO2Recurrent(Agent):
             advantages[:, t] = last_gae_lam * non_terminal
 
         # Compute bootstrapped targets by adding unnormalized advantages to values 
+        # advantages = self.advantage_normalizer.update(advantages)
+        # values = self.value_normalizer.update(values)
         targets = values + advantages
         return targets, advantages
 
@@ -534,7 +530,7 @@ class PPO2Recurrent(Agent):
 
         with torch.no_grad():
              # Reshape batch to gathered lists
-            states, actions, next_states, rewards, dones, truncs, prev_log_probs, policy_hidden, critic_hidden, values = map(
+            states, actions, next_states, rewards, dones, truncs, prev_log_probs, policy_hidden, critic_hidden, test = map(
                 torch.stack, zip(*batch)
             )
 
@@ -546,7 +542,7 @@ class PPO2Recurrent(Agent):
             truncs = truncs.permute((1, 0)).to(device=self.device, dtype=torch.float32).contiguous()
             prev_log_probs = prev_log_probs.to(device=self.device, dtype=torch.float32).contiguous()
             rewards = rewards.permute((1, 0)).to(device=self.device, dtype=torch.float32).contiguous()
-            values = values.permute((1, 0)).to(device=self.device, dtype=torch.float32).contiguous()
+            # values = values.permute((1, 0)).to(device=self.device, dtype=torch.float32).contiguous()
 
             policy_hidden = policy_hidden.to(device=self.device).contiguous()
             critic_hidden = critic_hidden.to(device=self.device).contiguous()
@@ -558,18 +554,19 @@ class PPO2Recurrent(Agent):
                 rewards = self.reward_normalizer.update(rewards)
 
             # Compute values for states and next states
-            _, next_hidden = self.critic(states[-1:, :], critic_hidden[-1, :].unsqueeze(0), dones=dones[-1:, :])
-            last_next_value, _ = self.critic(next_states[-1:, :], next_hidden.unsqueeze(0), dones=torch.zeros_like(dones[-1:, :]))  # Get the next value for the last next state
-            next_values_minus_last = values[:, 1:]
-            next_values = torch.cat((next_values_minus_last, last_next_value.view(num_envs, 1)), dim=1)
+            values, _ = self.critic(states, critic_hidden, dones)
+            last_next_value, _ = self.critic(next_states[-1:, :], dones=torch.zeros_like(dones[-1:, :]))  # Get the next value for the last next state
+            next_values_minus_last = values[1:, :]
+            next_values = torch.cat((next_values_minus_last, last_next_value), dim=0)
+            old_values, _ = self.old_critic(next_states, critic_hidden, dones) if self.hyperparams.value_loss_clipping else (None, None)
 
             # Calculate advantages with GAE
             targets, advantages_all = self.compute_gae_and_targets(
                 rewards.unsqueeze(-1),
-                dones.permute((1, 0)).unsqueeze(-1),
-                truncs.unsqueeze(-1),
-                values.unsqueeze(-1),
-                next_values.unsqueeze(-1),
+                dones.permute((1, 0)).unsqueeze(-1).clone(), # No cloning causes error on MPS (bug in pytorch for OSX)
+                truncs.unsqueeze(-1).clone(),
+                values.permute(1, 0, 2),
+                next_values.permute(1, 0, 2),
                 batch_size,
                 self.hyperparams.gamma,
                 self.hyperparams.gae_lambda,
@@ -611,6 +608,7 @@ class PPO2Recurrent(Agent):
                     mb_policy_hidden = policy_hidden[ids]
                     mb_critic_hidden = critic_hidden[ids]
                     mb_dones = dones[ids]
+                    mb_old_values = old_values[ids] if self.hyperparams.value_loss_clipping else None
 
                 # Compute policy distribution parameters
                 loc, scale, _ = self.actor(mb_states, mb_policy_hidden, dones=mb_dones)
@@ -630,9 +628,17 @@ class PPO2Recurrent(Agent):
                 )
 
                 # Compute the value loss with clipping
+                loss_value: torch.Tensor
                 predicted_values, _ = self.critic(mb_states, mb_critic_hidden, dones=mb_dones)
-                loss_value = F.smooth_l1_loss(predicted_values.squeeze(), mb_targets.squeeze())
-
+                if self.hyperparams.value_loss_clipping:
+                    clipped_values = mb_old_values + (predicted_values - mb_old_values).clamp(-self.hyperparams.clipped_value_loss_eps, self.hyperparams.clipped_value_loss_eps)
+                    loss_value1 = torch.square(predicted_values - mb_targets)
+                    loss_value2 = torch.square(clipped_values - mb_targets)
+                    loss_value = 0.5 * torch.max(loss_value1, loss_value2).mean()
+                else:
+                    loss_value = F.smooth_l1_loss(predicted_values.squeeze(), mb_targets.squeeze())
+                    # loss_value = F.mse_loss(predicted_values.squeeze(), mb_targets.squeeze())
+               
                 if self.hyperparams.combined_optimizer:
 
                     # Combine the losses
@@ -662,7 +668,7 @@ class PPO2Recurrent(Agent):
 
                 else:
                     loss_policy_with_entropy_bonus = loss_policy - (self.hyperparams.entropy_coefficient * entropy.detach())
-
+                
                     # Optimize the models
                     loss_value.backward()
                     loss_policy_with_entropy_bonus.backward()
@@ -686,8 +692,9 @@ class PPO2Recurrent(Agent):
                     total_loss_critic += loss_value.cpu()
                     total_entropy += entropy.mean().cpu()
 
-        # # Update the old critic network by copying the current critic network weights
-        # self.old_critic.load_state_dict(self.critic.state_dict())
+        # Update the old critic network by copying the current critic network weights
+        if self.hyperparams.value_loss_clipping:
+            self.old_critic.load_state_dict(self.critic.state_dict())
 
         # Compute average losses and entropy
         total_loss_actor /= (num_rounds * states.size(0) / mini_batch_size)
@@ -768,8 +775,6 @@ class PPO2Recurrent(Agent):
         state_dicts = torch.load(location)
         self.actor.load_state_dict(state_dicts["actor"])
         
-
-
 class PPO(Agent):
     def __init__(
             self,

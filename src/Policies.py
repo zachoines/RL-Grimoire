@@ -251,10 +251,10 @@ class GaussianGradientTransformerPolicy(nn.Module):
         embedded_states = self.embedding(state)
 
         # Add positional encodings to the embedded states
-        embedded_states_with_positions = self.positional_encodings.detach() + embedded_states
+        # embedded_states_with_positions = self.positional_encodings.detach() + embedded_states
 
         # Pass the embedded states through the transformer encoder
-        transformer_output = F.leaky_relu(self.transformer_encoder(embedded_states_with_positions))
+        transformer_output = F.leaky_relu(self.transformer_encoder(embedded_states))
 
         # Select only the last output of the transformer (last time step)
         last_output = transformer_output[:, -1, :]
@@ -274,7 +274,7 @@ class GaussianGradientGRUPolicy(nn.Module):
             in_features: int, 
             out_features: int, 
             hidden_size: int, 
-            num_layers = 2,
+            num_layers = 1,
             device: torch.device = torch.device("cpu")
     ):
         super().__init__()
@@ -379,3 +379,130 @@ class GaussianGradientGRUPolicy(nn.Module):
         stds = torch.clamp(stds, min=self.min_std_value)
 
         return means, stds, self.hidden
+
+class GaussianGradientLSTMPolicy(nn.Module):
+    def __init__(
+            self, 
+            in_features: int, 
+            out_features: int, 
+            hidden_size: int, 
+            num_layers = 2,
+            device: torch.device = torch.device("cpu")
+    ):
+        super().__init__()
+
+        # Shared network layer
+        self.shared_net = nn.Sequential(
+            nn.Linear(in_features, hidden_size),
+            nn.LeakyReLU(),
+        )
+
+        # LSTM layer
+        self.lstm = nn.LSTM(
+            input_size=hidden_size,
+            hidden_size=hidden_size,
+            batch_first=False,
+            num_layers=num_layers
+        )
+
+        # Mean network layers
+        self.mean = nn.Sequential(
+            nn.LeakyReLU(),
+            nn.Linear(hidden_size, out_features),
+            nn.Tanh()
+        )
+
+        # Standard deviation network layers
+        self.std = nn.Sequential(
+            nn.LeakyReLU(),
+            nn.Linear(hidden_size, out_features),
+            nn.Softplus()
+        )
+
+        # Other class attributes
+        self.eps = 1e-8
+        self.min_std_value = 1e-5
+        self.device = device
+        self.to(self.device)
+
+        self.num_layers = num_layers
+        self.hidden_size = hidden_size
+        self.hidden = None  # Hidden state
+        self.cell = None  # Cell state
+        self.prev_hidden = None  # Previous hidden state
+        self.prev_cell = None  # Previous cell state
+
+        # self.init_weights()
+
+    def init_hidden(self, batch_size: int):
+        """Initialize the hidden state and cell state for a new batch."""
+        self.hidden = torch.zeros(self.num_layers, batch_size, self.hidden_size).to(self.device).contiguous()
+        self.cell = torch.zeros(self.num_layers, batch_size, self.hidden_size).to(self.device).contiguous()
+
+    def get_hidden(self):
+        """Return the current hidden and cell states concatenated."""
+        return torch.cat((self.hidden, self.cell), dim=0)
+
+    def get_prev_hidden(self):
+        """Return the previous hidden and cell states concatenated."""
+        return torch.cat((self.prev_hidden, self.prev_cell), dim=0)
+
+    def set_hidden(self, hidden):
+        """Set the hidden state and cell state to a specific value."""
+        self.hidden, self.cell = torch.split(hidden, 2, dim=0)
+
+    def init_weights(self):
+        """Initialize the network weights."""
+        for module in self.modules():
+            if isinstance(module, nn.Linear):
+                nn.init.xavier_uniform_(module.weight)
+                nn.init.constant_(module.bias, 0.0)
+            elif isinstance(module, nn.LSTM):
+                for name, param in module.named_parameters():
+                    if 'weight' in name:
+                        nn.init.xavier_uniform_(param)
+                    elif 'bias' in name:
+                        nn.init.constant_(param, 0.0)
+
+    def forward(self, x, input_hidden=None, dones=None):
+        seq_length, batch_size, *_ = x.size() 
+
+        # Enforce internal hidden state
+        if self.hidden is None or self.hidden.size(1) != batch_size or self.cell is None or self.cell.size(1) != batch_size:
+            self.init_hidden(batch_size)
+
+        # Pass through shared net 
+        shared_features = self.shared_net(x.to(self.device))
+
+        # Process each sequence step, taking dones into consideration
+        lstm_outputs = []
+
+        if dones is not None: # TODO: check if "and torch.any(dones):" works
+            for t in range(seq_length):
+                
+                # Set the hidden and cell states
+                if input_hidden is not None:
+                    self.set_hidden(input_hidden[t, :])
+                
+                # Reset hidden and cell states for environments that are done
+                mask = dones[t].to(dtype=torch.bool, device=self.device)
+                self.hidden[:, mask, :] = 0.0
+                self.cell[:, mask, :] = 0.0
+
+                self.prev_hidden = self.hidden
+                self.prev_cell = self.cell
+                lstm_output, (self.hidden, self.cell) = self.lstm(shared_features[t].unsqueeze(0), (self.hidden.clone(), self.cell.clone()))
+                lstm_outputs.append(lstm_output)
+            lstm_outputs = torch.cat(lstm_outputs, dim=0)
+        else:
+            if input_hidden is not None:
+                self.set_hidden(input_hidden)
+            self.prev_hidden = self.hidden
+            self.prev_cell = self.cell
+            lstm_outputs, (self.hidden, self.cell) = self.lstm(shared_features, (self.hidden.detach(), self.cell.detach()))
+
+        means = self.mean(lstm_outputs)
+        stds = self.std(lstm_outputs)
+        stds = torch.clamp(stds, min=self.min_std_value)
+
+        return means, stds, self.get_hidden()

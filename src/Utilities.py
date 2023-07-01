@@ -6,10 +6,7 @@ import torch
 import random
 from typing import Any, Union, List
 
-def clear_directories():
-    # directories = ['videos', 'saved_models']
-    directories = ['videos', 'runs', 'saved_models']
-
+def clear_directories(directories: List[str]):
     for directory in directories:
         for root, _, files in os.walk(directory):
             for file in files:
@@ -59,7 +56,7 @@ def to_tensor(x: Union[np.ndarray, torch.Tensor, int, float, List], device=torch
 
 class Normalizer:
 
-    def __init__(self, mean_decay_rate: float = 0.9, variance_decay_rate: float = 0.999, eps: float = 1e-8, lower_percentile: float = 0.01, upper_percentile: float = 0.99, device: torch.device = torch.device('cpu')):
+    def __init__(self, mean_decay_rate: float = 0.75, variance_decay_rate: float = 0.85, eps: float = 1e-8, lower_percentile: float = 0.01, upper_percentile: float = 0.99, device: torch.device = torch.device('cpu')):
         self.mean_decay_rate = mean_decay_rate
         self.variance_decay_rate = variance_decay_rate
         self.eps = eps
@@ -70,7 +67,7 @@ class Normalizer:
         self.upper_percentile = upper_percentile
         self.device = device
 
-    def update(self, data: torch.Tensor) -> torch.Tensor:
+    def update(self, data: torch.Tensor, log_rewards: bool=True) -> torch.Tensor:
         """
         Update the running mean and variance using data and normalize data.
 
@@ -79,6 +76,8 @@ class Normalizer:
         """
         
         data = data.to(self.device)  # Ensure data is on the correct device
+        if log_rewards:
+            data = torch.where(data >= 0, torch.log(data + 1e-6), -torch.log(-data + 1e-6))
         data_flattened = data.view(-1)  # Flatten the data tensor
         batch_size = data_flattened.shape[0]
         
