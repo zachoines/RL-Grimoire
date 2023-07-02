@@ -105,7 +105,7 @@ class Trainer:
             if self.state.__class__ == np.ndarray:
                 self.state = to_tensor(self.state, device=self.device)
             
-            action, *other = self.agent.get_actions(self.state, self.dones)
+            action, *other = self.agent.get_actions(self.state, self.dones) # type: ignore
             action = action.cpu()
             action = self.train_params.preprocess_action(action)
             next_state, reward, done, trunc, _ = self.env.step(action)
@@ -114,7 +114,7 @@ class Trainer:
             other_tensors = [to_tensor(o, device=self.device) for o in other]
             action = to_tensor(action, device=self.device)
             next_state = to_tensor(next_state, device=self.device)
-            reward = to_tensor(reward, device=self.device)
+            reward = to_tensor(reward, device=self.device) # type: ignore
             self.dones = done = to_tensor(done, device=self.device)
             trunc = to_tensor(trunc, device=self.device)
             self.state = to_tensor(self.state, device=self.device)

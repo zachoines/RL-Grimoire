@@ -467,8 +467,6 @@ class PPO2Recurrent(Agent):
         
         # Normaliers
         self.reward_normalizer = Normalizer(device=device)
-        self.value_normalizer = Normalizer(device=device)
-        self.advantage_normalizer = Normalizer(device=device)
 
     def get_actions(self, state: torch.Tensor, dones: torch.Tensor, eval=False)->tuple[Tensor, Tensor]:
         if self.is_continous():
@@ -518,8 +516,6 @@ class PPO2Recurrent(Agent):
             advantages[:, t] = last_gae_lam * non_terminal
 
         # Compute bootstrapped targets by adding unnormalized advantages to values 
-        # advantages = self.advantage_normalizer.update(advantages)
-        # values = self.value_normalizer.update(values)
         targets = values + advantages
         return targets, advantages
 
@@ -530,7 +526,7 @@ class PPO2Recurrent(Agent):
 
         with torch.no_grad():
              # Reshape batch to gathered lists
-            states, actions, next_states, rewards, dones, truncs, prev_log_probs, policy_hidden, critic_hidden, test = map(
+            states, actions, next_states, rewards, dones, truncs, prev_log_probs, policy_hidden, critic_hidden, _ = map(
                 torch.stack, zip(*batch)
             )
 
@@ -542,14 +538,13 @@ class PPO2Recurrent(Agent):
             truncs = truncs.permute((1, 0)).to(device=self.device, dtype=torch.float32).contiguous()
             prev_log_probs = prev_log_probs.to(device=self.device, dtype=torch.float32).contiguous()
             rewards = rewards.permute((1, 0)).to(device=self.device, dtype=torch.float32).contiguous()
-            # values = values.permute((1, 0)).to(device=self.device, dtype=torch.float32).contiguous()
 
             policy_hidden = policy_hidden.to(device=self.device).contiguous()
             critic_hidden = critic_hidden.to(device=self.device).contiguous()
 
             batch_rewards = rewards.clone()
 
-            # Update running mean and variance and normalize rewards
+            # Update running mean and variance and normalize rewards.
             if self.hyperparams.use_moving_average_reward:
                 rewards = self.reward_normalizer.update(rewards)
 
