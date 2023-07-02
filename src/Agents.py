@@ -546,7 +546,8 @@ class PPO2Recurrent(Agent):
 
             # Update running mean and variance and normalize rewards.
             if self.hyperparams.use_moving_average_reward:
-                rewards = self.reward_normalizer.update(rewards)
+                # rewards = self.reward_normalizer.update(rewards)
+                rewards = (rewards - rewards.mean()) / (rewards.std() + self.eps)
 
             # Compute values for states and next states
             values, _ = self.critic(states, critic_hidden, dones)

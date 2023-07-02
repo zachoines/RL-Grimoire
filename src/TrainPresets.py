@@ -565,7 +565,7 @@ class PPO2HumanoidStandupRecurrentConfig(Config):
                 max_grad_norm = .5,
                 use_moving_average_reward = True,
                 combined_optimizer = True,
-                mini_batch_size = 32,
+                mini_batch_size = 16,
                 num_rounds = 8,
                 use_lr_scheduler = True,
                 lr_scheduler_constant_steps = 1000,
@@ -591,7 +591,7 @@ class PPO2HumanoidStandupRecurrentConfig(Config):
                 misc_arguments = {
                     "batch_size": self.num_envs, # Brax's convention uses batch_size for num_environments
                     "episode_length": self.max_episode_steps,
-                    "action_repeat": 1,
+                    "action_repeat": 2,
                     "legacy_spring": False
                 }
             )
