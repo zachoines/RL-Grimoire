@@ -437,7 +437,7 @@ class PPO2Recurrent(Agent):
             self.actor = GaussianGradientLSTMPolicy(
                 self.state_size, 
                 self.num_actions, 
-                self.hidden_size // 2,
+                self.hidden_size,
                 device=device
             )
             
@@ -482,7 +482,7 @@ class PPO2Recurrent(Agent):
             else:
                 action = normal.sample()
             action = action.clip(self.action_min, self.action_max)
-            return action, normal.log_prob(action).sum(dim=-1), policy_hidden, critic_hidden, value
+            return action, normal.log_prob(action).sum(dim=-1), policy_hidden, critic_hidden, value # type: ignore
         else:
             raise NotImplementedError
 
@@ -604,7 +604,7 @@ class PPO2Recurrent(Agent):
                     mb_policy_hidden = policy_hidden[ids]
                     mb_critic_hidden = critic_hidden[ids]
                     mb_dones = dones[ids]
-                    mb_old_values = old_values[ids] if self.hyperparams.value_loss_clipping else None
+                    mb_old_values = old_values[ids] if self.hyperparams.value_loss_clipping else None # type: ignore
 
                 # Compute policy distribution parameters
                 loc, scale, _ = self.actor(mb_states, mb_policy_hidden, dones=mb_dones)
@@ -627,10 +627,17 @@ class PPO2Recurrent(Agent):
                 loss_value: torch.Tensor
                 predicted_values, _ = self.critic(mb_states, mb_critic_hidden, dones=mb_dones)
                 if self.hyperparams.value_loss_clipping:
-                    clipped_values = mb_old_values + (predicted_values - mb_old_values).clamp(-self.hyperparams.clipped_value_loss_eps, self.hyperparams.clipped_value_loss_eps)
-                    loss_value1 = torch.square(predicted_values - mb_targets)
-                    loss_value2 = torch.square(clipped_values - mb_targets)
-                    loss_value = 0.5 * torch.max(loss_value1, loss_value2).mean()
+                    # clipped_values = mb_old_values + (predicted_values - mb_old_values).clamp(-self.hyperparams.clipped_value_loss_eps, self.hyperparams.clipped_value_loss_eps)
+                    # loss_value1 = torch.square(predicted_values - mb_targets)
+                    # loss_value2 = torch.square(clipped_values - mb_targets)
+                    # loss_value = 0.5 * torch.max(loss_value1, loss_value2).mean()
+                    mb_old_values_safe = mb_old_values.clamp(min=self.eps) # type: ignore
+                    ratio = (predicted_values / mb_old_values_safe).clamp(1 - self.hyperparams.clipped_value_loss_eps, 1 + self.hyperparams.clipped_value_loss_eps)
+                    clipped_values = mb_old_values * ratio
+                    loss_value1 = F.mse_loss(predicted_values.squeeze(), mb_targets.squeeze())
+                    loss_value2 = F.mse_loss(clipped_values.squeeze(), mb_targets.squeeze())
+                    loss_value = 0.5 * torch.min(loss_value1, loss_value2)
+
                 else:
                     loss_value = F.smooth_l1_loss(predicted_values.squeeze(), mb_targets.squeeze())
                     # loss_value = F.mse_loss(predicted_values.squeeze(), mb_targets.squeeze())

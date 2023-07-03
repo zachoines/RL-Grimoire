@@ -152,7 +152,7 @@ if __name__ == "__main__":
     # Load environment
     env: gym.Env
     if not config.env_params.vector_env:
-        env: gym.Env = gym.make(config.env_params.env_name, **config.env_params.misc_arguments)
+        env: gym.Env = gym.make(config.env_params.env_name, **config.env_params.misc_arguments) # type: ignore
     else:
         env: gym.Env = gym.vector.make(
             id = config.env_params.env_name, 
@@ -160,7 +160,7 @@ if __name__ == "__main__":
             wrappers=[
                 lambda env, env_id=i: RecordVideoWrapper(env, recording_length=2048, enabled=(True)) if env_id==0 else env for i in range(config.env_params.num_envs)
             ],
-            **config.env_params.misc_arguments
+            **config.env_params.misc_arguments # type: ignore
         )
 
     # Load agent

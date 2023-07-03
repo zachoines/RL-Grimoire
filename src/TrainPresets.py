@@ -549,27 +549,27 @@ class PPO2BraxAntConfig(Config):
 class PPO2HumanoidStandupRecurrentConfig(Config):
     def __init__(self):
         self.max_episode_steps = 1024
-        self.num_envs = 1024
+        self.num_envs = 2048
         super().__init__(
             PPO2RecurrentParams(
                 clip = 0.2,
-                clipped_value_loss_eps = 0.2, # Used when value_loss_clipping is enabled
+                clipped_value_loss_eps = 0.1, # Used when value_loss_clipping is enabled
                 value_loss_clipping = True, 
                 gamma = 0.99,
-                policy_learning_rate = 5e-4,
-                value_learning_rate = 2.5e-4, # Deactivated when "combined_optimizer" enabled
+                policy_learning_rate = 1e-3,
+                value_learning_rate = 1e-3, # Deactivated when "combined_optimizer" enabled
                 entropy_coefficient = 0.05,
                 hidden_size = 256,
                 gae_lambda = .95,
                 value_loss_weight = 0.5, # Activated when "combined_optimizer" enabled
                 max_grad_norm = .5,
                 use_moving_average_reward = True,
-                combined_optimizer = True,
-                mini_batch_size = 16,
-                num_rounds = 8,
+                combined_optimizer = False,
+                mini_batch_size = 32,
+                num_rounds = 12,
                 use_lr_scheduler = True,
                 lr_scheduler_constant_steps = 1000,
-                lr_scheduler_max_steps = 10000,
+                lr_scheduler_max_steps = 20000,
                 lr_scheduler_max_factor = 1.0,
                 lr_scheduler_min_factor = 1.0 / 100.0,
             ),
