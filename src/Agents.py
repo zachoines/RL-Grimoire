@@ -636,7 +636,7 @@ class PPO2Recurrent(Agent):
                     clipped_values = mb_old_values * ratio
                     loss_value1 = F.mse_loss(predicted_values.squeeze(), mb_targets.squeeze())
                     loss_value2 = F.mse_loss(clipped_values.squeeze(), mb_targets.squeeze())
-                    loss_value = 0.5 * torch.min(loss_value1, loss_value2)
+                    loss_value = torch.min(loss_value1, loss_value2)
 
                 else:
                     loss_value = F.smooth_l1_loss(predicted_values.squeeze(), mb_targets.squeeze())
