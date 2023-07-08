@@ -54,34 +54,43 @@ class REINFORCEHalfCheetahConfig(Config):
             )
         )
 
-# Revisit this config
-class A2CInvertedDoublePendulumConfig(Config):
+class A2CLunarLanderConfig(Config):
     def __init__(self):
-        super().__init__(
-            A2CParams(
-                tau = 0.1,
-                gamma = 0.99,
-                policy_learning_rate = 0.01,
-                value_learning_rate = 0.01,
-                entropy_coefficient = 0.01,
-                hidden_size = 128
-            ),
-            TrainerParams(
-                num_epochs = 100,
-                batches_per_epoch = 16,
-                batch_size = 128,
-                shuffle_batches=True,
-                save_location = "./saved_models/InvertedDoublePendulumAC2"
-            ),
-            EnvParams(
-                env_name = "InvertedDoublePendulum-v4",
-                num_envs = 4,
-                misc_arguments = {
-                    "max_episode_steps": 512,
-                    "render_mode": "rgb_array"
-                }
+            self.num_envs = 8
+            super().__init__(
+                A2CParams(
+                    tau = 0.1,
+                    gamma = 0.99,
+                    policy_learning_rate = 5e-4,
+                    value_learning_rate = 5e-4,
+                    entropy_coefficient = 0.01,
+                    hidden_size = 256
+                ),
+                TrainerParams(
+                    num_epochs = 100,
+                    batches_per_epoch = 16,
+                    batch_size = 256,
+                    shuffle_batches=True,
+                    batch_transitions_by_env_trajectory = True,
+                    preprocess_action = lambda x: x.view((self.num_envs)).to(dtype=torch.int32).numpy(),
+                    save_location = "./saved_models/LunarLandingAC2"
+                ),
+                EnvParams(
+                    env_name = "LunarLander-v2",
+                    num_envs = self.num_envs,
+                    env_normalization=True,
+                    max_episode_steps = 512,
+                    vector_env=True,
+                    misc_arguments = {
+                        "continuous": False,
+                        "gravity": -10.0,
+                        "enable_wind": False,
+                        "wind_power": 15.0,
+                        "turbulence_power": 1.5,
+                        "render_mode": "rgb_array"
+                    }
+                )
             )
-        )
 
 class PPOBraxAntConfig(Config):
     def __init__(self):
@@ -157,51 +166,6 @@ class PPO2InvertedDoublePendulumConfig(Config):
             ),
             EnvParams(
                 env_name = "InvertedDoublePendulum-v4",
-                env_normalization=False,
-                num_envs = self.num_envs,
-                max_episode_steps = self.max_episode_steps,
-                vector_env=True,
-                misc_arguments = {
-                    "max_episode_steps": self.max_episode_steps,
-                    "render_mode": "rgb_array"
-                }
-            )
-        )
-
-class PPO2HalfCheetahConfig(Config):
-    def __init__(self):
-        self.max_episode_steps = 1024
-        self.num_envs = 2
-        super().__init__(
-            PPO2Params(
-                clip = 0.2,
-                gamma = 0.99,
-                policy_learning_rate = 2e-4,
-                value_learning_rate = 1e-3,
-                entropy_coefficient = 0.1,
-                hidden_size = 256,
-                gae_lambda = 0.95,
-                log_std_max=2,
-                log_std_min=-20,
-                reward_ema_coefficient = 0.99,
-                clipped_value_loss_eps = 0.2,
-                max_grad_norm = 1.0,
-                use_moving_average_reward = True,
-                combined_optimizer = True
-            ),
-            TrainerParams(
-                batch_transitions_by_env_trajectory = True, # Must be enabled for PPO
-                num_epochs = 2000,
-                batches_per_epoch = 1,
-                batch_size = 128,
-                updates_per_batch = 1,
-                shuffle_batches = False, # False to not interfere with GAE creation
-                save_model_frequency=20,
-                save_location = "./saved_models/HalfCheetahPPO2",
-                preprocess_action = lambda x: x.view((self.num_envs,6)).to(dtype=torch.float32).numpy()
-            ),
-            EnvParams(
-                env_name = "HalfCheetah-v4",
                 env_normalization=False,
                 num_envs = self.num_envs,
                 max_episode_steps = self.max_episode_steps,
@@ -451,29 +415,36 @@ class PPO2HumanoidStandupConfig(Config):
 class PPO2BraxHopperConfig(Config):
     def __init__(self):
         self.max_episode_steps = 1024
-        self.num_envs = 256
+        self.num_envs = 1024
 
         super().__init__(
-            PPO2Params(
-                clip = 0.2,
-                clipped_value_loss_eps = 0.2, # Used when value_loss_clipping is enabled
+            PPO2RecurrentParams(
+                clip = 0.1,
+                clipped_value_loss_eps = 0.1, # Used when value_loss_clipping is enabled
                 value_loss_clipping = False, 
                 gamma = 0.99,
-                policy_learning_rate = 1e-4,
-                value_learning_rate = 2.5e-4, # Deactivated when "combined_optimizer" enabled
-                entropy_coefficient = 0.2,
-                hidden_size = 64,
-                gae_lambda = 0.95,
+                policy_learning_rate = 6e-4,
+                value_learning_rate = 3e-4, # Deactivated when "combined_optimizer" enabled
+                entropy_coefficient = 0.05,
+                hidden_size = 256,
+                gae_lambda = .95,
                 value_loss_weight = 0.5, # Activated when "combined_optimizer" enabled
-                max_grad_norm = 2.0,
+                max_grad_norm = .5,
                 use_moving_average_reward = True,
-                combined_optimizer = False
+                combined_optimizer = False,
+                mini_batch_size = 16,
+                num_rounds = 32,
+                use_lr_scheduler = True,
+                lr_scheduler_constant_steps = 5000,
+                lr_scheduler_max_steps = 40000,
+                lr_scheduler_max_factor = 1.0,
+                lr_scheduler_min_factor = 1.0 / 100.0,
             ),
             TrainerParams(
                 batch_transitions_by_env_trajectory = True, # Must be enabled for PPO
                 num_epochs = 2000,
                 batches_per_epoch = 1,
-                batch_size = 16,
+                batch_size = 256,
                 updates_per_batch = 1,
                 shuffle_batches = False, # False to not interfere with GAE creation
                 save_location = "./saved_models/BraxHopperPPO2"

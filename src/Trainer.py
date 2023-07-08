@@ -37,10 +37,6 @@ class Trainer:
         self.normalizer = normalizer
         self.state : torch.Tensor
         self.device = device
-
-        self.action_min = float(self.env.action_space.low_repr) # type: ignore
-        self.action_max = float(self.env.action_space.high_repr) # type: ignore
-
         self.reset()
 
     def reduce_dicts_to_avg(self, list_of_dicts: List[Dict[str, torch.Tensor]]) -> Dict[str, torch.Tensor]:
@@ -105,7 +101,7 @@ class Trainer:
             if self.state.__class__ == np.ndarray:
                 self.state = to_tensor(self.state, device=self.device)
             
-            action, *other = self.agent.get_actions(self.state, self.dones) # type: ignore
+            action, *other = self.agent.get_actions(self.state, dones=self.dones) # type: ignore
             action = action.cpu()
             action = self.train_params.preprocess_action(action)
             next_state, reward, done, trunc, _ = self.env.step(action)
@@ -127,7 +123,7 @@ class Trainer:
             if self.train_params.batch_transitions_by_env_trajectory:
                 self.exp_buffer.append([(self.state, action, next_state, reward, done, trunc, *other_tensors)])
             else:
-                self.exp_buffer.append([Transition(s, action, n_s, r, d, t, o) for s, n_s, r, d, t, o in zip(self.state, next_state, reward, done, trunc, *other_tensors)]) # type: ignore
+                self.exp_buffer.append([(s, action, n_s, r, d, t, o) for s, n_s, r, d, t, o in zip(self.state, next_state, reward, done, trunc, *other_tensors)]) # type: ignore
         
             self.state = next_state
 

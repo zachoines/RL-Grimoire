@@ -46,7 +46,7 @@ class Agent:
     def state_dict(self)-> Dict[str,Dict]:
         raise NotImplementedError
 
-    def get_actions(self, state: torch.Tensor, **kwargs)->tuple[Tensor, Tensor]:
+    def get_actions(self, state: torch.Tensor, eval: bool = False, **kwargs)->tuple[Tensor, Tensor]:
         raise NotImplementedError
     
     def get_optimizers(self) -> Dict[str, Optimizer]:
@@ -133,7 +133,7 @@ class PPO2(Agent):
         # Normaliers
         self.reward_normalizer = Normalizer(device=device)
 
-    def get_actions(self, state: torch.Tensor, dones: torch.Tensor, eval=False)->tuple[Tensor, Tensor]:
+    def get_actions(self, state: torch.Tensor, eval=False, **kwargs)->tuple[Tensor, Tensor]:
         if self.is_continous():
             mean, std = self.actor(state)
             mean, std = torch.squeeze(mean), torch.squeeze(std)
@@ -468,7 +468,7 @@ class PPO2Recurrent(Agent):
         # Normaliers
         self.reward_normalizer = Normalizer(device=device)
 
-    def get_actions(self, state: torch.Tensor, dones: torch.Tensor, eval=False)->tuple[Tensor, Tensor]:
+    def get_actions(self, state: torch.Tensor, dones: torch.Tensor = torch.tensor([]), eval=False, **kwargs)->tuple[Tensor, Tensor]:
         if self.is_continous():
             mean, std, _ = self.actor(state.unsqueeze(0), dones=dones)
             value, _ = self.critic(state.unsqueeze(0), dones=dones)
@@ -812,7 +812,7 @@ class PPO(Agent):
         
         self.optimizers = self.get_optimizers()
         
-    def get_actions(self, state: torch.Tensor, eval=False)->tuple[Tensor, Tensor]:
+    def get_actions(self, state: torch.Tensor, eval=False, **kwargs)->tuple[Tensor, Tensor]:
         if self.is_continous():
             mean, std = self.actor(state)
             # mean = self.rescaleAction(mean, self.action_min, self.action_max)
@@ -824,8 +824,7 @@ class PPO(Agent):
                 return normal.sample(), torch.concat((mean, std), dim=-1)
         else:
             raise NotImplementedError
-        
-    
+          
     def learn(self, batch: list[Transition], num_envs: int, batch_size: int)->dict[str, Tensor]:
     
         # Reshape batch to gathered lists 
@@ -938,57 +937,81 @@ class A2C(Agent):
             # make target network initially the same parameters
             self.target_critic.load_state_dict(self.critic.state_dict())
             
+        elif self.is_discrete():
+            if self.is_multi_discrete():
+                self.num_actions = self.action_space.nvec[0] # type: ignore
+            else:
+                self.num_actions = self.action_space.n # type: ignore
+            self.actor = DiscreteGradientPolicy(self.state_size, self.num_actions, self.hidden_size, device=device)
+            self.critic = ValueNetwork(self.state_size, self.hidden_size, device)
+            self.target_critic = ValueNetwork(self.state_size, self.hidden_size, device)
+
+            # make target network initially the same parameters
+            self.target_critic.load_state_dict(self.critic.state_dict())
         else:
             raise NotImplementedError
         
         self.optimizers = self.get_optimizers()
         
-    def get_actions(self, state: torch.Tensor, eval=False)->tuple[Tensor, Tensor]:
+    def get_actions(self, state: torch.Tensor, eval=False, **kwargs)->tuple[Tensor, Tensor]:
+        state.to(device=self.device)
+
         if self.is_continous():
             mean, std = self.actor(state)
-            mean = self.rescaleAction(mean, self.action_min, self.action_max)
-
+  
             if eval:
-                return mean, torch.concat((mean, std), dim=-1)
+                normal = torch.distributions.Normal(mean, std) 
+                log_prob = normal.sample(mean)
+                return mean, log_prob
             else:
                 normal = torch.distributions.Normal(mean, std) 
-                return normal.sample(), torch.concat((mean, std), dim=-1)
+                log_prob = normal.sample(mean)
+                return normal.sample(), log_prob
         else:
-            raise NotImplementedError
+            probs = self.actor(state)
+            if eval:
+                action = torch.argmax(probs)
+                action_probs = torch.distributions.Categorical(probs)
+                log_prob = action_probs.log_prob(action)
+                return action, log_prob
+            else:
+               action_probs = torch.distributions.Categorical(probs)
+               action = action_probs.sample()
+               log_prob = action_probs.log_prob(action)
+               return action, log_prob
         
     
     def learn(self, batch: list[Transition], num_envs: int, batch_size: int)->dict[str, Tensor]:
         
         # Reshape batch to gathered lists 
-        states, actions, next_states, rewards, dones, other = map(torch.stack, zip(*batch))
+        states, actions, next_states, rewards, dones, _, _ = map(torch.stack, zip(*batch))
 
         # Reshape data
-        states = states.reshape(batch_size, -1).to(device=self.device, dtype=torch.float32)
-        actions = actions.reshape(batch_size, -1).to(device=self.device, dtype=torch.float32 if self.is_continous() else torch.int64)
-        next_states = next_states.reshape(batch_size, -1).to(device=self.device, dtype=torch.float32)
-        rewards = rewards.reshape(batch_size, -1).to(device=self.device, dtype=torch.float32)
-        dones = dones.reshape(batch_size, -1).to(device=self.device, dtype=torch.float32)
-        other = other.reshape(batch_size, -1).to(device=self.device, dtype=torch.float32)
-        rewards_normalized = (rewards - rewards.mean()) / (rewards.std() + self.eps)
+        with torch.no_grad():
+            states = states.to(device=self.device, dtype=torch.float32).contiguous()
+            actions = actions.to(device=self.device, dtype=torch.float32 if self.is_continous() else torch.int64).contiguous()
+            next_states = next_states.to(device=self.device, dtype=torch.float32).contiguous()
+            rewards = rewards.to(device=self.device, dtype=torch.float32).contiguous()
+            dones = dones.to(device=self.device, dtype=torch.float32).contiguous()
+            rewards_normalized = (rewards - rewards.mean()) / (rewards.std() + self.eps)
+            
+            state_values = torch.squeeze(self.critic(states))
+            next_state_values = self.target_critic(next_states)
+            target = rewards_normalized + (self.hyperparams.gamma * (1.0 - dones) * torch.squeeze(next_state_values))
+            advantages = target - state_values
 
         if self.is_continous():
-            state_values = self.critic(states)
-
-            with torch.no_grad():
-                next_state_values = self.target_critic(next_states)
-                target = rewards_normalized + (self.hyperparams.gamma * (1.0 - dones) * next_state_values)
-                advantages = target - state_values
-
-            # Critic loss
-            critic_loss = F.mse_loss(state_values, target)
-
+            
             # Policy loss and entropy
             loc, scale = self.actor(states)
-            dist = Normal(self.rescaleAction(loc, self.action_min, self.action_max), scale)
+            dist = Normal(loc, scale)
             log_probs = dist.log_prob(actions).sum(dim=-1, keepdim=True)
             entropy = dist.entropy().sum(dim=-1, keepdim=True)
-            pg_loss = -log_probs * advantages # Negative because of SGA (not SGD)
+            pg_loss = -log_probs * advantages.clone()
             loss = (pg_loss - self.hyperparams.entropy_coefficient * entropy).mean()
+
+            # Critic loss
+            critic_loss = F.mse_loss(torch.squeeze(self.critic(states)), target)
 
             # Optimize the models
             self.optimizers['actor'].zero_grad()
@@ -1010,7 +1033,37 @@ class A2C(Agent):
                 "Train Rewards": rewards.mean()
             }
         else:
-            raise NotImplementedError
+            # Critic loss
+            critic_loss = F.mse_loss(self.critic(states), torch.unsqueeze(target, dim=-1))
+
+            # Policy loss with entropy bonus
+            action_probs = self.actor(states.clone().detach())
+            dist = torch.distributions.Categorical(action_probs)
+            log_probs = dist.log_prob(actions)
+            entropy = dist.entropy()
+            pg_loss = -log_probs * advantages
+            loss = (pg_loss - self.hyperparams.entropy_coefficient * entropy).mean()
+
+            # Optimize the models
+            self.optimizers['critic'].zero_grad()
+            critic_loss.backward()
+            self.optimizers['critic'].step()
+            
+            self.optimizers['actor'].zero_grad()
+            loss.backward()
+            self.optimizers['actor'].step()
+
+            
+            # Update target network
+            for param, target_param in zip(self.critic.parameters(), self.target_critic.parameters()):
+                target_param.data.copy_(self.hyperparams.tau * param.data + (1 - self.hyperparams.tau) * target_param.data)
+
+            return {
+                "Actor loss": pg_loss.mean(),
+                "Critic loss": critic_loss,
+                "Entropy": entropy.mean(),
+                "Rewards": rewards.mean()
+            }
     
     def get_optimizers(self) -> Dict[str, Optimizer]:
         return {
@@ -1063,7 +1116,7 @@ class REINFORCE(Agent):
 
         self.optimizers = self.get_optimizers()
         
-    def get_actions(self, state: torch.Tensor, eval=False)->tuple[Tensor, Tensor]:
+    def get_actions(self, state: torch.Tensor, eval=False, **kwargs)->tuple[Tensor, Tensor]:
         if self.is_discrete():
             if eval:
                 action_probs = self.policy(state)

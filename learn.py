@@ -13,10 +13,12 @@ from src.TrainPresets import *
 from src.TrainPresets import Config
 from src.Trainer import Trainer
 from src.Utilities import set_random_seeds, RunningMeanStd, clear_directories
+
 from src.wrappers import RecordVideoWrapper
 
 import torch
 import gymnasium as gym
+from gym.wrappers import autoreset
 
 # Setup arguements
 parser = argparse.ArgumentParser(description='Description of your program.')
@@ -27,7 +29,7 @@ if __name__ == "__main__":
     
     # Misc setup
     set_random_seeds()
-    clear_directories(['videos', 'saved_models']) #  'runs'])  # TODO Make this a command line argument.
+    clear_directories(['videos', 'saved_models' ]) # , 'runs'])  # TODO Make this a command line argument.
     args = parser.parse_args()
     device = torch.device(
         "mps" if torch.has_mps else (# MACOS
@@ -48,7 +50,7 @@ if __name__ == "__main__":
             id = config.env_params.env_name, 
             num_envs=config.env_params.num_envs,
             wrappers=[
-                lambda env, env_id=i: RecordVideoWrapper(env, recording_length=2048, enabled=(True)) if env_id==0 else env for i in range(config.env_params.num_envs)
+                lambda env, env_id=i: RecordVideoWrapper(env, recording_length=512, enabled=(True)) if env_id==0 else env for i in range(config.env_params.num_envs)
             ],
             **config.env_params.misc_arguments # type: ignore
         )

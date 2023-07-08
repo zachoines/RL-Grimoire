@@ -7,21 +7,27 @@ import math
 class DiscreteGradientPolicy(nn.Module):
     def __init__(self, in_features : int, out_features : int, hidden_size : int, device : torch.device = torch.device("cpu")):
         super().__init__()
-        hidden_space1 = int(hidden_size / 2)
-        hidden_space2 = hidden_size
-        self.fc1 = nn.Linear(in_features, hidden_space1)
-        self.fc2 = nn.Linear(hidden_space1, hidden_space2)
-        self.fc3 = nn.Linear(hidden_space2, out_features)
-        self.lrelu = nn.LeakyReLU()
-        
+
+        self.net = nn.Sequential(
+            nn.Linear(in_features, hidden_size // 2),
+            nn.LeakyReLU(),
+            nn.Linear(hidden_size // 2, hidden_size),
+            nn.LeakyReLU(),
+            nn.Linear(hidden_size, out_features),
+            nn.Softmax(dim=-1)
+        )
+
+        self.apply(self.init_weights)        
         self.device = device
         self.to(self.device)
 
+    def init_weights(self, m):
+        if type(m) == nn.Linear:
+            nn.init.kaiming_normal_(m.weight, a=0.01)
+            m.bias.data.fill_(0.0)
+
     def forward(self, x):
-        x = self.lrelu(self.fc1(x))
-        x = self.lrelu(self.fc2(x))
-        x = torch.softmax(self.fc3(x), dim=-1)
-        return x
+        return self.net(x)
 
 class GaussianGradientPolicy(nn.Module):
     def __init__(self, 
@@ -34,21 +40,19 @@ class GaussianGradientPolicy(nn.Module):
         self.shared_net = nn.Sequential(
             nn.Linear(in_features, hidden_size),
             nn.LeakyReLU(),
-            nn.Linear(hidden_size, hidden_size // 2),
-            nn.LeakyReLU(),
         )
 
         self.mean = nn.Sequential(
-            nn.Linear(hidden_size // 2, hidden_size // 4),
+            nn.Linear(hidden_size, hidden_size // 2),
             nn.LeakyReLU(),
-            nn.Linear(hidden_size // 4, out_features),
+            nn.Linear(hidden_size // 2, out_features),
             nn.Tanh()
         )
 
         self.std = nn.Sequential(
-            nn.Linear(hidden_size // 2, hidden_size // 4),
+            nn.Linear(hidden_size, hidden_size  // 2),
             nn.LeakyReLU(),
-            nn.Linear(hidden_size // 4, out_features),
+            nn.Linear(hidden_size // 2, out_features),
             nn.Softplus()
         )
 
