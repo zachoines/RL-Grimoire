@@ -567,6 +567,7 @@ class PPO2Recurrent(Agent):
                 self.hyperparams.gamma,
                 self.hyperparams.gae_lambda,
             )
+            # advantages_all = (advantages_all - advantages_all.mean()) / (advantages_all.std() + self.eps)
 
         # Reshape for mini-batch updates
         targets = targets.permute((1, 0, 2))
@@ -612,7 +613,7 @@ class PPO2Recurrent(Agent):
                 log_probs = dist.log_prob(mb_actions).sum(dim=-1)
 
                 # Compute entropy bonus
-                entropy = torch.mean(dist.entropy())
+                entropy = dist.entropy().mean(dim=-1)
 
                 # Compute the policy loss using the PPO clipped objective
                 ratio = torch.exp(log_probs - mb_prev_log_probs)
@@ -620,34 +621,33 @@ class PPO2Recurrent(Agent):
                     torch.min(
                         ratio * mb_advantages,
                         ratio.clip(1.0 - self.hyperparams.clip, 1.0 + self.hyperparams.clip) * mb_advantages,
-                    )
+                    ) - (self.hyperparams.entropy_coefficient * entropy)
                 )
 
                 # Compute the value loss with clipping
                 loss_value: torch.Tensor
                 predicted_values, _ = self.critic(mb_states, mb_critic_hidden, dones=mb_dones)
                 if self.hyperparams.value_loss_clipping:
-                    # clipped_values = mb_old_values + (predicted_values - mb_old_values).clamp(-self.hyperparams.clipped_value_loss_eps, self.hyperparams.clipped_value_loss_eps)
-                    # loss_value1 = torch.square(predicted_values - mb_targets)
-                    # loss_value2 = torch.square(clipped_values - mb_targets)
-                    # loss_value = 0.5 * torch.max(loss_value1, loss_value2).mean()
-                    mb_old_values_safe = mb_old_values.clamp(min=self.eps) # type: ignore
-                    ratio = (predicted_values / mb_old_values_safe).clamp(1 - self.hyperparams.clipped_value_loss_eps, 1 + self.hyperparams.clipped_value_loss_eps)
-                    clipped_values = mb_old_values * ratio
-                    loss_value1 = F.mse_loss(predicted_values.squeeze(), mb_targets.squeeze())
-                    loss_value2 = F.mse_loss(clipped_values.squeeze(), mb_targets.squeeze())
-                    loss_value = torch.min(loss_value1, loss_value2)
+                    clipped_values = mb_old_values + (predicted_values - mb_old_values).clamp(-self.hyperparams.clipped_value_loss_eps, self.hyperparams.clipped_value_loss_eps)
+                    loss_value1 = F.mse_loss(predicted_values, mb_targets)
+                    loss_value2 = F.mse_loss(clipped_values, mb_targets)
+                    loss_value = torch.max(loss_value1, loss_value2).mean()
+                    # mb_old_values_safe = mb_old_values.clamp(min=self.eps) # type: ignore
+                    # ratio = (predicted_values / mb_old_values_safe).clamp(1 - self.hyperparams.clipped_value_loss_eps, 1 + self.hyperparams.clipped_value_loss_eps)
+                    # clipped_values = mb_old_values * ratio
+                    # loss_value1 = F.smooth_l1_loss(predicted_values.squeeze(), mb_targets.squeeze())
+                    # loss_value2 = F.smooth_l1_loss(clipped_values.squeeze(), mb_targets.squeeze())
+                    # loss_value = torch.min(loss_value1, loss_value2)
 
                 else:
                     loss_value = F.smooth_l1_loss(predicted_values.squeeze(), mb_targets.squeeze())
-                    # loss_value = F.mse_loss(predicted_values.squeeze(), mb_targets.squeeze())
                
                 if self.hyperparams.combined_optimizer:
 
                     # Combine the losses
                     total_loss = (
                         (self.hyperparams.policy_loss_weight * loss_policy)
-                        - (self.hyperparams.entropy_coefficient * entropy)
+                        # - (self.hyperparams.entropy_coefficient * entropy)
                         + (self.hyperparams.value_loss_weight * loss_value)
                     )
 
@@ -670,11 +670,12 @@ class PPO2Recurrent(Agent):
                     total_entropy += entropy.mean().cpu()
 
                 else:
-                    loss_policy_with_entropy_bonus = loss_policy - (self.hyperparams.entropy_coefficient * entropy.detach())
+                    # loss_policy_with_entropy_bonus = loss_policy - (self.hyperparams.entropy_coefficient * entropy.detach())
                 
                     # Optimize the models
                     loss_value.backward()
-                    loss_policy_with_entropy_bonus.backward()
+                    loss_policy.backward()
+                    # loss_policy_with_entropy_bonus.backward()
 
                     clip_grad_norm_(self.optimizers["actor"].param_groups[0]["params"], self.max_grad_norm)
                     clip_grad_norm_(self.optimizers["critic"].param_groups[0]["params"], self.max_grad_norm)

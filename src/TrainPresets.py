@@ -570,28 +570,29 @@ class PPO2HumanoidStandupRecurrentConfig(Config):
 
 class PPO2HumanoidRecurrentConfig(Config):
     def __init__(self):
-        self.max_episode_steps = 1024
-        self.num_envs = 16
+        self.max_episode_steps = 512
+        self.num_envs = 20000
+
         super().__init__(
             PPO2RecurrentParams(
-                clip = 0.2,
+                clip = 0.1,
                 clipped_value_loss_eps = 0.2, # Used when value_loss_clipping is enabled
                 value_loss_clipping = False, 
                 gamma = 0.99,
-                policy_learning_rate = 1e-3,
-                value_learning_rate = 5e-4, # Deactivated when "combined_optimizer" enabled
-                entropy_coefficient = 0.2,
-                hidden_size = 256,
-                gae_lambda = .95,
+                policy_learning_rate = 5e-4,
+                value_learning_rate = 1e-3, # Deactivated when "combined_optimizer" enabled
+                entropy_coefficient = 0.1,
+                hidden_size = 128,
+                gae_lambda = .99,
                 value_loss_weight = 0.5, # Activated when "combined_optimizer" enabled
-                max_grad_norm = 1.0,
-                use_moving_average_reward = False,
+                max_grad_norm = .5,
+                use_moving_average_reward = True,
                 combined_optimizer = False,
                 mini_batch_size = 8,
-                num_rounds = 8,
+                num_rounds = 32,
                 use_lr_scheduler = True,
-                lr_scheduler_constant_steps = 200,
-                lr_scheduler_max_steps = 2000,
+                lr_scheduler_constant_steps = 1000,
+                lr_scheduler_max_steps = 20000,
                 lr_scheduler_max_factor = 1.0,
                 lr_scheduler_min_factor = 1.0 / 100.0,
             ),
@@ -599,7 +600,7 @@ class PPO2HumanoidRecurrentConfig(Config):
                 batch_transitions_by_env_trajectory = True, # Must be enabled for PPO
                 num_epochs = 2000,
                 batches_per_epoch = 1,
-                batch_size = 128,
+                batch_size = 32,
                 updates_per_batch = 1,
                 shuffle_batches = False, # False to not interfere with GAE creation
                 save_location = "./saved_models/HumanoidPPO2"
@@ -613,8 +614,11 @@ class PPO2HumanoidRecurrentConfig(Config):
                 misc_arguments = {
                     "batch_size": self.num_envs, # Brax's convention uses batch_size for num_environments
                     "episode_length": self.max_episode_steps,
-                    "action_repeat": 1,
-                    "legacy_spring": False
+                    "reset_noise_scale": 1e-2,
+                    "healthy_z_range": (1.0, 2.1),
+                    "exclude_current_positions_from_observation": False,
+                    "action_repeat": 1
                 }
             )
         )
+    

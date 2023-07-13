@@ -69,34 +69,19 @@ if machine == "arm64" and system == "Darwin" or \
     )
 
     gym.register(
-        id="half-cheetah-hopper",
-        entry_point="src.brax_to_gymnasium:convert_brax_to_gym",
-        kwargs={
-            "name": "hopper",
-            "episode_length": 1024,
-            "forward_reward_weight": 1.0,
-            "ctrl_cost_weight": 1e-3,
-            "healthy_reward": 1.0,
-            "terminate_when_unhealthy": True,
-            "reset_noise_scale": 5e-3,
-            "exclude_current_positions_from_observation": True,
-            "action_repeat": 1,
-            "healthy_z_range": (.7, float('inf'))
-        }
-    )
-
-    gym.register(
         id="brax-humanoid",
         entry_point="src.brax_to_gymnasium:convert_brax_to_gym",
         kwargs={
             "name": "humanoid",
             "episode_length": 1024,
-            "ctrl_cost_weight": 0.1,
             "forward_reward_weight": 1.25,
+            "ctrl_cost_weight": 0.1,
             "healthy_reward": 5.0,
             "terminate_when_unhealthy": True,
+            "healthy_z_range": (0.8, 2.1),
             "reset_noise_scale": 1e-2,
             "exclude_current_positions_from_observation": True,
+            "legacy_spring": False,
             "action_repeat": 1,
             
         }

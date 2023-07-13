@@ -3,6 +3,8 @@ import os
 import argparse
 import importlib
 from tqdm import tqdm
+os.environ["JAX_PLATFORM_NAME"] = "gpu"
+os.environ['XLA_PYTHON_CLIENT_ALLOCATOR'] = 'platform'
 
 # Make accessible 'src' and its modules
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -18,7 +20,6 @@ from src.wrappers import RecordVideoWrapper
 
 import torch
 import gymnasium as gym
-from gym.wrappers import autoreset
 
 # Setup arguements
 parser = argparse.ArgumentParser(description='Description of your program.')
@@ -29,7 +30,7 @@ if __name__ == "__main__":
     
     # Misc setup
     set_random_seeds()
-    clear_directories(['videos', 'saved_models' ]) # , 'runs'])  # TODO Make this a command line argument.
+    clear_directories(['videos', 'saved_models']) # , 'runs'])  # TODO Make this a command line argument.
     args = parser.parse_args()
     device = torch.device(
         "mps" if torch.has_mps else (# MACOS

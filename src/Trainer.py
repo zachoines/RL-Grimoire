@@ -102,7 +102,6 @@ class Trainer:
                 self.state = to_tensor(self.state, device=self.device)
             
             action, *other = self.agent.get_actions(self.state, dones=self.dones) # type: ignore
-            action = action.cpu()
             action = self.train_params.preprocess_action(action)
             next_state, reward, done, trunc, _ = self.env.step(action)
         
