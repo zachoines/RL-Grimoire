@@ -39,13 +39,16 @@ if machine == "arm64" and system == "Darwin" or \
         entry_point="src.brax_to_gymnasium:convert_brax_to_gym",
         kwargs={
             "name": "ant",
-            "episode_length": 1024,
-            "healthy_reward": 1.0,
             "ctrl_cost_weight": 0.5,
-            "contact_cost_weight": 1e-4,
-            "use_contact_forces": True,
+            "use_contact_forces": False,
+            "contact_cost_weight": 5e-4,
+            "healthy_reward": 1.0,
             "terminate_when_unhealthy": True,
+            "healthy_z_range": (0.2, 1.0),
+            "contact_force_range": (-1.0, 1.0),
+            "reset_noise_scale": 0.1,
             "exclude_current_positions_from_observation": True,
+            # "backend": "positional",
             "action_repeat": 1
         }
     )
@@ -78,12 +81,11 @@ if machine == "arm64" and system == "Darwin" or \
             "ctrl_cost_weight": 0.1,
             "healthy_reward": 5.0,
             "terminate_when_unhealthy": True,
-            "healthy_z_range": (0.8, 2.1),
+            "healthy_z_range": (1.0, 2.0),
             "reset_noise_scale": 1e-2,
             "exclude_current_positions_from_observation": True,
-            "legacy_spring": False,
             "action_repeat": 1,
-            
+            "backend": "positional"
         }
     )
 

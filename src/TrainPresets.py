@@ -571,7 +571,7 @@ class PPO2HumanoidStandupRecurrentConfig(Config):
 class PPO2HumanoidRecurrentConfig(Config):
     def __init__(self):
         self.max_episode_steps = 512
-        self.num_envs = 20000
+        self.num_envs = 2
 
         super().__init__(
             PPO2RecurrentParams(
@@ -602,6 +602,7 @@ class PPO2HumanoidRecurrentConfig(Config):
                 batches_per_epoch = 1,
                 batch_size = 32,
                 updates_per_batch = 1,
+                preprocess_action = lambda x: x.cpu(),
                 shuffle_batches = False, # False to not interfere with GAE creation
                 save_location = "./saved_models/HumanoidPPO2"
             ),
@@ -615,8 +616,63 @@ class PPO2HumanoidRecurrentConfig(Config):
                     "batch_size": self.num_envs, # Brax's convention uses batch_size for num_environments
                     "episode_length": self.max_episode_steps,
                     "reset_noise_scale": 1e-2,
-                    "healthy_z_range": (1.0, 2.1),
+                    "healthy_z_range": (1.0, 2.0),
                     "exclude_current_positions_from_observation": False,
+                    "action_repeat": 1
+                }
+            )
+        )
+    
+class PPO2AntRecurrentConfig(Config):
+    def __init__(self):
+        self.max_episode_steps = 512
+        self.num_envs = 2
+
+        super().__init__(
+            PPO2RecurrentParams(
+                clip = 0.1,
+                clipped_value_loss_eps = 0.2, # Used when value_loss_clipping is enabled
+                value_loss_clipping = False, 
+                gamma = 0.99,
+                policy_learning_rate = 5e-4,
+                value_learning_rate = 1e-3, # Deactivated when "combined_optimizer" enabled
+                entropy_coefficient = 0.1,
+                hidden_size = 128,
+                gae_lambda = .99,
+                value_loss_weight = 0.5, # Activated when "combined_optimizer" enabled
+                max_grad_norm = .5,
+                use_moving_average_reward = True,
+                combined_optimizer = False,
+                mini_batch_size = 8,
+                num_rounds = 32,
+                use_lr_scheduler = True,
+                lr_scheduler_constant_steps = 1000,
+                lr_scheduler_max_steps = 20000,
+                lr_scheduler_max_factor = 1.0,
+                lr_scheduler_min_factor = 1.0 / 100.0,
+            ),
+            TrainerParams(
+                batch_transitions_by_env_trajectory = True, # Must be enabled for PPO
+                num_epochs = 2000,
+                batches_per_epoch = 1,
+                batch_size = 32,
+                updates_per_batch = 1,
+                preprocess_action = lambda x: x.cpu(),
+                shuffle_batches = False, # False to not interfere with GAE creation
+                save_location = "./saved_models/AntPPO2"
+            ),
+            EnvParams(
+                env_name = "brax-ant",
+                env_normalization=True,
+                num_envs = self.num_envs,
+                max_episode_steps = self.max_episode_steps,
+                vector_env=False, # Brax will init 'n' environments on its side
+                misc_arguments = {
+                    "batch_size": self.num_envs, # Brax's convention uses batch_size for num_environments
+                    "episode_length": self.max_episode_steps,
+                    # "reset_noise_scale": 1e-2,
+                    # "healthy_z_range": (1.0, 2.0),
+                    # "exclude_current_positions_from_observation": False,
                     "action_repeat": 1
                 }
             )

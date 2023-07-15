@@ -57,7 +57,7 @@ class Trainer:
             result_dict[key] = avg_value
         
         return result_dict
-
+    
     def model_step(self)->dict[str, Tensor]:
         batch = self.exp_buffer.sample(
             self.train_params.batch_size, 
@@ -89,6 +89,9 @@ class Trainer:
         self.dones = torch.zeros(self.env_params.num_envs).to(self.device)
         if self.env_params.env_normalization:
             self.state = self.normalizer.update(to_tensor(self.state, device=self.device))
+
+    def eval(self, env: gym.Env, num_steps: int, save_loc: str):
+        pass
 
     def step(self):
         

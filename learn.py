@@ -3,7 +3,7 @@ import os
 import argparse
 import importlib
 from tqdm import tqdm
-os.environ["JAX_PLATFORM_NAME"] = "gpu"
+os.environ["JAX_PLATFORM_NAME"] = "cpu"
 os.environ['XLA_PYTHON_CLIENT_ALLOCATOR'] = 'platform'
 
 # Make accessible 'src' and its modules
@@ -44,6 +44,7 @@ if __name__ == "__main__":
 
     # Load environment
     env: gym.Env
+    eval_env: gym.Env # Kept seperate as vectorized evironments cant record
     if not config.env_params.vector_env:
         env: gym.Env = gym.make(config.env_params.env_name, **config.env_params.misc_arguments) # type: ignore
     else:
@@ -55,6 +56,12 @@ if __name__ == "__main__":
             ],
             **config.env_params.misc_arguments # type: ignore
         )
+
+    eval_args = config.env_params.misc_arguments
+    del eval_args["batch_size"] 
+    del eval_args["episode_length"]
+    del eval_args["action_repeat"]
+    eval_env = gym.make(config.env_params.env_name, **eval_args) # type: ignore
 
     # Load agent
     agent_class_ = getattr(importlib.import_module("src.Agents"), config.agent_params.agent_name)
@@ -77,6 +84,7 @@ if __name__ == "__main__":
     pbar = tqdm(total=config.trainer_params.num_epochs)
     for epoch in trainer:
         running_mean_std_recorder.save(loc=config.trainer_params.save_location + "NormStates")
+        trainer.eval(eval_env, 512, 'videos/{config.env_params.env_name}_{epoch}')
         pbar.update(1)
 
     pbar.close()

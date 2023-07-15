@@ -3,16 +3,16 @@ import jax
 import numpy as np
 import cv2
 import os
-from collections import deque
 
 import gymnasium as gym
 from gymnasium import spaces
 
 import torch
-from brax.v1.io import torch as b_torch
-from brax.v1.envs import env as brax_env
-from brax.v1 import jumpy as jp
-import brax.v1.envs as envs
+from brax.io import torch as b_torch
+from brax.io import image
+from brax import envs
+from brax.envs.base import Env
+
 from datetime import datetime
 
 def convert_brax_to_gym(name: str, frame_stack: bool = False, stack_size: int = 16, **kwargs):
@@ -25,23 +25,81 @@ def convert_brax_to_gym(name: str, frame_stack: bool = False, stack_size: int = 
     current_datetime = datetime.now()
     current_date_string = current_datetime.strftime("%Y-%m-%d_%H-%M-%S")
     env = envs.create(
-        name,
-        **kwargs
+          name,
+          **kwargs
     )
-    env = VectorGymWrapper(
-        env,
-        record = True, 
-        record_location = 'videos/',
-        record_name_prefix = f"{name}_{current_date_string}",
-        recording_save_frequeny = 512
-    )
+    if kwargs["num_envs"] == 1:
+      env = GymWrapper(env)
+    else:
+      env = VectorGymWrapper(
+          env,
+          record = True, 
+          record_location = 'videos/',
+          record_name_prefix = f"{name}_{current_date_string}",
+          recording_save_frequeny = 512
+      )
     env = JaxToTorchWrapper(env, device)
 
     if frame_stack:
-       env = BraxFrameStack(env, stack_size, device=device)  # Add this line
+      env = BraxFrameStack(env, stack_size, device=device)  # Add this line
 
     return env
 
+class GymWrapper(gym.Env):
+
+  # Flag that prevents `gym.register` from misinterpreting the `_step` and
+  # `_reset` as signs of a deprecated gym Env API.
+  _gym_disable_underscore_compat: ClassVar[bool] = True
+
+  def __init__(self,
+               env: Env,
+               seed: int = 0,
+               backend: Optional[str] = None):
+    self._env = env
+    self.metadata = {
+        'render.modes': ['human', 'rgb_array'],
+        'video.frames_per_second': 30
+    }
+    self.seed(seed)
+    self.backend = backend
+    self._state = None
+
+    obs_high = np.inf * np.ones(self._env.observation_size, dtype=float)
+    self.observation_space = spaces.Box(-obs_high, obs_high, dtype=np.float32)
+
+    action_high = np.ones(self._env.action_size, dtype=float)
+    self.action_space = spaces.Box(-action_high, action_high, dtype=np.float32)
+
+    def reset(key):
+      key1, key2 = jax.random.split(key)
+      state = self._env.reset(key2)
+      return state, state.obs, key1
+
+    self._reset = jax.jit(reset, backend=self.backend)
+
+    def step(state, action):
+      state = self._env.step(state, action)
+      info = {**state.metrics, **state.info}
+      return state, state.obs, state.reward, state.done, state.info["truncation"], info
+
+    self._step = jax.jit(step, backend=self.backend)
+
+  def reset(self):
+    self._state, obs, self._key = self._reset(self._key)
+    return obs, {}
+  
+  def close(self):
+    pass
+
+  def step(self, action):
+    self._state, obs, reward, done, truncs, info = self._step(self._state, action)
+    return obs, reward, done, truncs, info
+
+  def render(self, mode='human'):
+    if mode == 'rgb_array':
+      pass
+    else:
+      raise NotImplementedError
 
 class BraxFrameStack(gym.Wrapper):
     def __init__(self, env: gym.Env, stack_size: int, device: torch.device = torch.device("cpu")):
@@ -82,70 +140,6 @@ class BraxFrameStack(gym.Wrapper):
 
         return obs
 
-
-
-class GymWrapper(gym.Env):
-
-  # Flag that prevents `gym.register` from misinterpreting the `_step` and
-  # `_reset` as signs of a deprecated gym Env API.
-  _gym_disable_underscore_compat: ClassVar[bool] = True
-
-  def __init__(self,
-               env: brax_env.Env,
-               seed: int = 0,
-               backend: Optional[str] = None):
-    self._env = env
-    self.metadata = {
-        'render.modes': ['human', 'rgb_array'],
-        'video.frames_per_second': 30
-    }
-    self.seed(seed)
-    self.backend = backend
-    self._state = None
-
-    obs_high = jp.inf * jp.ones(self._env.observation_size, dtype=float)
-    self.observation_space = spaces.Box(-obs_high, obs_high, dtype=np.float32)
-
-    action_high = jp.ones(self._env.action_size, dtype=float)
-    self.action_space = spaces.Box(-action_high, action_high, dtype=np.float32)
-
-    def reset(key):
-      key1, key2 = jp.random_split(key)
-      state = self._env.reset(key2)
-      return state, state.obs, key1
-
-    self._reset = jax.jit(reset, backend=self.backend)
-
-    def step(state, action):
-      state = self._env.step(state, action)
-      info = {**state.metrics, **state.info}
-      return state, state.obs, state.reward, state.done, {}, info
-
-    self._step = jax.jit(step, backend=self.backend)
-
-  def reset(self):
-    self._state, obs, self._key = self._reset(self._key)
-    # We return device arrays for pytorch users.
-    return obs, {}
-
-  def step(self, action):
-    self._state, obs, reward, done, info = self._step(self._state, action)
-    # We return device arrays for pytorch users.
-    return obs, reward, done, {}, info
-
-  def seed(self, seed: int = 0):
-    self._key = jax.random.PRNGKey(seed)
-
-  def render(self, mode='human'):
-    # pylint:disable=g-import-not-at-top
-    from brax.v1.io import image
-    if mode == 'rgb_array':
-      sys, qp = self._env.sys, self._state.qp # type: ignore
-      return image.render_array(sys, qp, 256, 256)
-    else:
-      raise NotImplementedError
-      # return super().render(mode=mode)  # just raise an exception
-
 class VectorGymWrapper(gym.vector.VectorEnv):
   """A wrapper that converts batched Brax Env to one that follows Gym VectorEnv API."""
 
@@ -154,7 +148,7 @@ class VectorGymWrapper(gym.vector.VectorEnv):
   _gym_disable_underscore_compat: ClassVar[bool] = True
 
   def __init__(self,
-        env: brax_env.Env,
+        env: Env,
         seed: int = 0,
         backend: Optional[str] = None, 
         record: bool = True, 
@@ -182,7 +176,7 @@ class VectorGymWrapper(gym.vector.VectorEnv):
     self._env = env
     self.metadata = {
         'render.modes': ['human', 'rgb_array'],
-        'video.frames_per_second': 1 / self._env.sys.config.dt # type: ignore
+        'video.frames_per_second': 1 / self._env.env.unwrapped.sys.dt # type: ignore
     }
     if not hasattr(self._env, 'batch_size'):
       raise ValueError('underlying env must be batched')
@@ -192,20 +186,20 @@ class VectorGymWrapper(gym.vector.VectorEnv):
     self.backend = backend
     self._state = None
 
-    obs_high = jp.inf * jp.ones(self._env.observation_size)
+    obs_high = np.inf * np.ones(self._env.observation_size)
     self.single_observation_space = gym.spaces.Box(
         -obs_high, obs_high, dtype=np.float32)
     self.observation_space = gym.vector.utils.batch_space(self.single_observation_space,
                                                self.num_envs)
 
-    action_high = jp.ones(self._env.action_size, dtype=float)
+    action_high = np.ones(self._env.action_size, dtype=float)
     self.single_action_space = gym.spaces.Box(
         -action_high, action_high, dtype=np.float32)
     self.action_space = gym.vector.utils.batch_space(self.single_action_space,
                                           self.num_envs)
 
     def reset(key):
-      key1, key2 = jp.random_split(key)
+      key1, key2 = jax.random.split(key)
       state = self._env.reset(key2)
       return state, state.obs, key1
 
@@ -263,11 +257,12 @@ class VectorGymWrapper(gym.vector.VectorEnv):
         self._recording = state
 
   def render(self, mode='human'):
-    from brax.v1.io import image
-    sys = self._env.sys
-    qp = jp.take(self._state.qp, 0)  # type: ignore
+    sys = self._env.unwrapped.sys
+    # qp = jp.take(self._state.obs, 0)  # type: ignore
     if mode == 'rgb_array':
-      return image.render_array(sys, qp, 256, 256)
+      state = self._env.unwrapped.pipeline_init(state1.pipeline_state.q, state1.pipeline_state.qd)
+      env_render = image.render_array(sys, state, 256, 256) 
+      return env_render
     else:
       cv2.imshow('Frame', image.render_array(sys, qp, 256, 256))
       cv2.waitKey(1)
@@ -275,10 +270,11 @@ class VectorGymWrapper(gym.vector.VectorEnv):
 class JaxToTorchWrapper(gym.Wrapper):
 
   def __init__(self,
-               env: GymWrapper | VectorGymWrapper,
+               env: VectorGymWrapper | GymWrapper,
                device: Optional[b_torch.Device] = None):
     super().__init__(env)
     self.device: Optional[b_torch.Device] = device
+    self.observation_space = env.observation_space
     self.env = env
 
   def observation(self, observation) -> torch.Tensor:
