@@ -54,17 +54,26 @@ def to_tensor(x: Union[np.ndarray, torch.Tensor, int, float, List], device=torch
         raise ValueError("Unsupported data type. Only NumPy arrays, PyTorch tensors, primitives, and lists are supported.")
     return x
 
+def winsorize(data: torch.Tensor, batch_size: int, device: torch.device, lower_percentile: float = 0.005, upper_percentile: float = 0.995):
+    data = data.to(device=device)
+    if device.type == 'cpu' or device.type.startswith('cuda'):
+        lower = data.kthvalue(int(lower_percentile * batch_size)).values
+        upper = data.kthvalue(int(upper_percentile * batch_size)).values
+    else: # No support yet for MPS devices
+        sorted_data, _ = torch.sort(data)
+        lower = sorted_data[int(lower_percentile * batch_size)]
+        upper = sorted_data[int(upper_percentile * batch_size)]
+    return torch.clamp(data, lower, upper)
+
 class Normalizer:
 
-    def __init__(self, mean_decay_rate: float = 0.8, variance_decay_rate: float = 0.9, eps: float = 1e-8, lower_percentile: float = 0.005, upper_percentile: float = 0.995, device: torch.device = torch.device('cpu')):
+    def __init__(self, mean_decay_rate: float = 0.8, variance_decay_rate: float = 0.9, eps: float = 1e-8, device: torch.device = torch.device('cpu')):
         self.mean_decay_rate = mean_decay_rate
         self.variance_decay_rate = variance_decay_rate
         self.eps = eps
         self.m = torch.tensor(0., device=device)  # Running mean initialization
         self.v = torch.tensor(eps, device=device)  # Running variance initialization, initialized with eps to prevent division by zero
         self.t = torch.tensor(0., device=device)  # Timestep initialization
-        self.lower_percentile = lower_percentile
-        self.upper_percentile = upper_percentile
         self.device = device
 
     def update(self, data: torch.Tensor, log_rewards: bool=True) -> torch.Tensor:
@@ -82,14 +91,7 @@ class Normalizer:
         batch_size = data_flattened.shape[0]
         
         # Winsorize the data
-        if self.device.type == 'cpu' or self.device.type.startswith('cuda'):
-            lower = data_flattened.kthvalue(int(self.lower_percentile * batch_size)).values
-            upper = data_flattened.kthvalue(int(self.upper_percentile * batch_size)).values
-        else:
-            sorted_data, _ = torch.sort(data_flattened)
-            lower = sorted_data[int(self.lower_percentile * batch_size)]
-            upper = sorted_data[int(self.upper_percentile * batch_size)]
-        data_flattened = torch.clamp(data_flattened, lower, upper)
+        data_flattened = winsorize(data, batch_size, self.device)
 
         if self.t == 0:
             # If this is the first batch, initialize the running mean and variance with the sample mean and variance

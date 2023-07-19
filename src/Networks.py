@@ -1,9 +1,7 @@
 import torch
 from torch import nn
 from torch.nn import functional as F
-from Utilities import to_tensor
 from torch.nn import TransformerEncoder, TransformerEncoderLayer
-from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 import math
 
 class DuelingNetwork(nn.Module):
@@ -41,7 +39,6 @@ class DuelingNetwork(nn.Module):
         value     = self.value(x)
         return value, advantage
     
-
 class ValueNetwork(nn.Module):
     def __init__(self, in_features : int, hidden_size : int, device : torch.device = torch.device("cpu")):
         super().__init__()
@@ -66,7 +63,6 @@ class ValueNetwork(nn.Module):
     def forward(self, x):
         x = self.value_net(x)
         return x
-
 
 class ValueNetworkResidual(nn.Module):
     def __init__(self, in_features: int, hidden_size: int, device: torch.device = torch.device("cpu")):
@@ -435,11 +431,11 @@ class ValueNetworkLSTM(nn.Module):
 
     def get_hidden(self):
         """Return the current hidden and cell states concatenated."""
-        return torch.cat((self.hidden, self.cell), dim=0)
+        return torch.cat((self.hidden, self.cell), dim=0) # type: ignore
 
     def get_prev_hidden(self):
         """Return the previous hidden and cell states concatenated."""
-        return torch.cat((self.prev_hidden, self.prev_cell), dim=0)
+        return torch.cat((self.prev_hidden, self.prev_cell), dim=0) # type: ignore
 
     def set_hidden(self, hidden):
         """Set the hidden state and cell state to a specific value."""
@@ -480,12 +476,12 @@ class ValueNetworkLSTM(nn.Module):
                 
                 # Reset hidden and cell states for environments that are done
                 mask = dones[t].to(dtype=torch.bool, device=self.device)
-                self.hidden[:, mask, :] = 0.0
-                self.cell[:, mask, :] = 0.0
+                self.hidden[:, mask, :] = 0.0 # type: ignore
+                self.cell[:, mask, :] = 0.0 # type: ignore
 
                 self.prev_hidden = self.hidden
                 self.prev_cell = self.cell
-                lstm_output, (self.hidden, self.cell) = self.lstm(shared_features[t].unsqueeze(0), (self.hidden.clone(), self.cell.clone()))
+                lstm_output, (self.hidden, self.cell) = self.lstm(shared_features[t].unsqueeze(0), (self.hidden.clone(), self.cell.clone())) # type: ignore
                 lstm_outputs.append(lstm_output)
             lstm_outputs = torch.cat(lstm_outputs, dim=0)
         else:
@@ -493,7 +489,200 @@ class ValueNetworkLSTM(nn.Module):
                 self.set_hidden(input_hidden)
             self.prev_hidden = self.hidden
             self.prev_cell = self.cell
-            lstm_outputs, (self.hidden, self.cell) = self.lstm(shared_features, (self.hidden.detach(), self.cell.detach()))
+            lstm_outputs, (self.hidden, self.cell) = self.lstm(shared_features, (self.hidden.detach(), self.cell.detach())) # type: ignore
 
         value = self.value_net(lstm_outputs)
         return value, self.get_hidden()
+
+class ICMV1(nn.Module):
+    def __init__(self, input_shape: int, num_actions: int, hidden_size: int = 256, state_feature_size: int = 256, device: torch.device = torch.device("cpu")):
+        """
+        Initialize the ICM module.
+
+        :param input_shape: The shape of the input state.
+        :param num_actions: The number of possible actions.
+        :param hidden_size: The size of the hidden layers.
+        :param state_feature_size: The size of the state feature representation.
+        :param device: The device to run the module on.
+        """
+        super(ICM, self).__init__()
+
+        self.device = device
+
+        # Feature network to output state feature representation
+        self.feature = nn.Sequential(
+            nn.Linear(input_shape, hidden_size),
+            nn.ReLU(),
+            nn.Linear(hidden_size, state_feature_size)
+        ).to(self.device)
+
+        # Inverse model to output action predictions (Assumes input actions in range [-1, 1])
+        self.inverse_net = nn.Sequential(
+            nn.Linear(state_feature_size * 2, hidden_size),
+            nn.ReLU(),
+            nn.Linear(hidden_size, num_actions),
+            nn.Tanh()
+        ).to(self.device)
+
+        # Forward model to output state feature representation
+        self.forward_net = nn.Sequential(
+            nn.Linear(state_feature_size + num_actions, hidden_size),
+            nn.ReLU(),
+            nn.Linear(hidden_size, state_feature_size)
+        ).to(self.device)
+
+    def forward(self, state: torch.Tensor, action: torch.Tensor, next_state: torch.Tensor) -> tuple:
+        """
+        Forward pass through the module.
+
+        :param state: The current state.
+        :param action: The action taken.
+        :param next_state: The next state.
+        :return: The predicted action, the feature representation of the next state, and the predicted feature representation of the next state.
+        """
+
+        state_feature = self.feature(state)
+        next_state_feature = self.feature(next_state)
+        action_pred = self.inverse_net(torch.cat([state_feature, next_state_feature], dim=-1))
+        next_state_feature_pred = self.forward_net(torch.cat([state_feature, action], dim=-1))
+
+        return action_pred, next_state_feature, next_state_feature_pred
+
+    def calc_loss(self, action_pred: torch.Tensor, next_state_feature: torch.Tensor, next_state_feature_pred: torch.Tensor, action: torch.Tensor, beta: float = 0.2) -> tuple:
+        """
+        Calculate the forward and inverse loss.
+
+        :param action_pred: The predicted action.
+        :param next_state_feature: The feature representation of the next state.
+        :param next_state_feature_pred: The predicted feature representation of the next state.
+        :param action: The action taken.
+        :param beta: The weighting factor for the forward loss.
+        :return: The forward loss and the inverse loss.
+        """
+        forward_loss = beta * F.mse_loss(next_state_feature_pred, next_state_feature.detach())
+        inverse_loss = (1 - beta) * F.mse_loss(action_pred, action.detach())
+
+        return forward_loss, inverse_loss
+
+    def intrinsic_reward(self, next_state_feature: torch.Tensor, next_state_feature_pred: torch.Tensor, n: float = 1.0) -> torch.Tensor:
+        """
+        Calculate the intrinsic reward.
+
+        :param next_state_feature: The feature representation of the next state.
+        :param next_state_feature_pred: The predicted feature representation of the next state.
+        :param n: The factor to multiply with the intrinsic reward.
+        :return: The intrinsic reward.
+        """
+        intrinsic_reward = (n / 2.0) * (next_state_feature_pred - next_state_feature).pow(2).sum(-1)
+
+        return intrinsic_reward
+
+class ICM(nn.Module):
+    """
+    An Intrinsic Curiosity Module (ICM) that predicts the next state and the action taken.
+    """
+    def __init__(self, input_shape: int, num_actions: int, hidden_size: int = 256, state_feature_size: int = 256, device: torch.device = torch.device("cpu")):
+        super(ICM, self).__init__()
+
+        self.device = device
+        self.eps = 1e-8
+
+        # Feature network to output state feature representation
+        self.feature = nn.Sequential(
+            nn.Linear(input_shape, state_feature_size)
+        ).to(self.device)
+
+        # Inverse model to output action predictions
+        self.inverse_net = nn.Sequential(
+            nn.Linear(state_feature_size * 2, hidden_size),
+            nn.LeakyReLU()
+        ).to(self.device)
+
+        # Network to output the mean of the action distribution
+        self.mean = nn.Sequential(
+            nn.Linear(hidden_size, num_actions),
+            nn.Tanh()
+        ).to(self.device)
+
+        # Network to output the log standard deviation of the action distribution
+        self.log_std = nn.Sequential(
+            nn.Linear(hidden_size, num_actions),
+        ).to(self.device)
+
+        # Forward model to output state feature representation
+        self.forward_net = nn.Sequential(
+            nn.Linear(state_feature_size + num_actions, hidden_size),
+            nn.LeakyReLU(),
+            nn.Linear(hidden_size, state_feature_size)
+        ).to(self.device)
+
+    def forward(self, state: torch.Tensor, action: torch.Tensor, next_state: torch.Tensor) -> tuple:
+        """
+        Forward pass through the module.
+
+        :param state: The current state.
+        :param action: The action taken.
+        :param next_state: The next state.
+        :return: The predicted action mean and std, the feature representation of the next state, and the predicted feature representation of the next state.
+        """
+        state_feature = self.feature(state)
+        next_state_feature = self.feature(next_state)
+        inverse_net_output = self.inverse_net(torch.cat([state_feature, next_state_feature], dim=-1))
+        action_mean = self.mean(inverse_net_output)
+        action_log_std = self.log_std(inverse_net_output)
+        # action_std = torch.exp(action_log_std) + self.eps
+        action_std = F.softplus(action_log_std)
+        next_state_feature_pred = self.forward_net(torch.cat([state_feature, action], dim=-1))
+
+        return action_mean, action_std, next_state_feature, next_state_feature_pred
+    
+    def kl_divergence(self, mu1, std1, mu2, std2):
+        """
+        Calculate the Kullback-Leibler (KL) divergence between two Gaussian distributions.
+
+        :param mu1: The mean of the first distribution.
+        :param std1: The standard deviation of the first distribution.
+        :param mu2: The mean of the second distribution.
+        :param std2: The standard deviation of the second distribution.
+        :return: The KL divergence.
+        """
+        # return torch.log(std2 / std1) + (std1.pow(2) + (mu1 - mu2).pow(2)) / (2.0 * std2.pow(2)) - 0.5
+        dist1 = torch.distributions.Normal(mu1, std1)
+        dist2 = torch.distributions.Normal(mu2, std2)
+        return torch.distributions.kl_divergence(dist1, dist2).mean()
+
+    def calc_loss(self, action_mean: torch.Tensor, action_std: torch.Tensor, next_state_feature: torch.Tensor, next_state_feature_pred: torch.Tensor, policy_mean: torch.Tensor, policy_std: torch.Tensor, beta: float = 0.2) -> tuple:
+        """
+        Calculate the forward and inverse loss.
+
+        :param action_mean: The predicted action mean.
+        :param action_std: The predicted action std.
+        :param next_state_feature: The feature representation of the next state.
+        :param next_state_feature_pred: The predicted feature representation of the next state.
+        :param policy_mean: The mean of the policy's action distribution.
+        :param policy_std: The std of the policy's action distribution.
+        :param beta: The weighting factor for the forward loss.
+        :return: The forward loss and the inverse loss.
+        """
+        forward_loss = beta * torch.square(next_state_feature_pred - next_state_feature).mean()
+        
+        # mean_loss = torch.square(action_mean - policy_mean).mean()
+        # std_loss = torch.square(torch.log(action_std) - torch.log(policy_std)).mean()
+        # inverse_loss = (1 - beta) * (mean_loss + std_loss)
+
+        kl_divergence = self.kl_divergence(policy_mean, policy_std, action_mean, action_std)
+        inverse_loss = (1 - beta) * kl_divergence
+
+        return forward_loss, inverse_loss
+
+    def intrinsic_reward(self, next_state_feature: torch.Tensor, next_state_feature_pred: torch.Tensor, n: float = .1) -> torch.Tensor:
+        """
+        Calculate the intrinsic reward.
+
+        :param next_state_feature: The feature representation of the next state.
+        :param next_state_feature_pred: The predicted feature representation of the next state.
+        :param n: The factor to multiply with the intrinsic reward.
+        :return: The intrinsic reward.
+        """
+        intrinsic_reward = n * torch.sqrt((next_state_feature_pred - next_state_feature).pow(2).sum(-1))
+        return intrinsic_reward

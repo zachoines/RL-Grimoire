@@ -62,7 +62,7 @@ class Trainer:
         batch = self.exp_buffer.sample(
             self.train_params.batch_size, 
             remove=self.train_params.replay_buffer_remove_on_sample, 
-            shuffle=self.train_params.replay_buffer_shuffle_experiances
+            shuffle=self.train_params.replay_buffer_shuffle_experiences
         )
         self.current_update += 1
         train_results = []

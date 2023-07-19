@@ -30,6 +30,9 @@ class DiscreteGradientPolicy(nn.Module):
         return self.net(x)
 
 class GaussianGradientPolicy(nn.Module):
+    """
+    A Gaussian policy network that outputs the mean and standard deviation of a Gaussian distribution for each action.
+    """
     def __init__(self, 
         in_features : int, 
         out_features : int, 
@@ -37,42 +40,43 @@ class GaussianGradientPolicy(nn.Module):
         device : torch.device = torch.device("cpu")):
         super().__init__()
 
+        # Shared network
         self.shared_net = nn.Sequential(
             nn.Linear(in_features, hidden_size),
             nn.LeakyReLU(),
         )
 
+        # Network to output the mean of the action distribution
         self.mean = nn.Sequential(
-            nn.Linear(hidden_size, hidden_size // 2),
+            nn.Linear(hidden_size, hidden_size),
             nn.LeakyReLU(),
-            nn.Linear(hidden_size // 2, out_features),
+            nn.Linear(hidden_size, out_features),
             nn.Tanh()
         )
 
-        self.std = nn.Sequential(
-            nn.Linear(hidden_size, hidden_size  // 2),
+        # Network to output the log standard deviation of the action distribution
+        self.log_std = nn.Sequential(
+            nn.Linear(hidden_size, hidden_size),
             nn.LeakyReLU(),
-            nn.Linear(hidden_size // 2, out_features),
-            nn.Softplus()
+            nn.Linear(hidden_size, out_features),
         )
 
-        # self.apply(self.init_weights) 
         self.eps = 1e-8
-        self.min_std_value = 1e-5
         self.device = device
         self.to(self.device)
 
-    def init_weights(self, m):
-        if type(m) == nn.Linear:
-            nn.init.kaiming_normal_(m.weight, a=0.01)
-            m.weight.data *= 0.1
-            m.bias.data.fill_(0.0)
-
     def forward(self, state):
+        """
+        Forward pass through the network.
+
+        :param state: The current state.
+        :return: The mean and standard deviation of the action distribution.
+        """
         shared_features = self.shared_net(state.to(self.device))
         means = self.mean(shared_features)
-        stds = self.std(shared_features)
-        stds = torch.clamp(stds, min=self.min_std_value)
+        log_stds = self.log_std(shared_features)
+        stds = F.softplus(log_stds)
+        # stds = torch.exp(log_stds) + self.eps
         return means, stds
     
 class GaussianGradientTransformerPolicyV1(nn.Module):
@@ -367,7 +371,7 @@ class GaussianGradientGRUPolicy(nn.Module):
                 
                 # Reset hidden state for environments that are done
                 mask = dones[t].to(dtype=torch.bool, device=self.device)
-                self.hidden[:, mask, :] = 0.0
+                self.hidden[:, mask, :] = 0.0 # type: ignore
 
                 self.prev_hidden = self.hidden
                 gru_output, self.hidden = self.gru(shared_features[t].unsqueeze(0), self.hidden.clone())
@@ -378,8 +382,8 @@ class GaussianGradientGRUPolicy(nn.Module):
             self.prev_hidden = self.hidden
             gru_outputs, self.hidden = self.gru(shared_features, self.hidden)
 
-        means = self.mean(gru_output)
-        stds = self.std(gru_output)
+        means = self.mean(gru_output) # type: ignore
+        stds = self.std(gru_output) # type: ignore
         stds = torch.clamp(stds, min=self.min_std_value)
 
         return means, stds, self.hidden
@@ -445,11 +449,11 @@ class GaussianGradientLSTMPolicy(nn.Module):
 
     def get_hidden(self):
         """Return the current hidden and cell states concatenated."""
-        return torch.cat((self.hidden, self.cell), dim=0)
+        return torch.cat((self.hidden, self.cell), dim=0) # type: ignore
 
     def get_prev_hidden(self):
         """Return the previous hidden and cell states concatenated."""
-        return torch.cat((self.prev_hidden, self.prev_cell), dim=0)
+        return torch.cat((self.prev_hidden, self.prev_cell), dim=0) # type: ignore
 
     def set_hidden(self, hidden):
         """Set the hidden state and cell state to a specific value."""
@@ -490,12 +494,12 @@ class GaussianGradientLSTMPolicy(nn.Module):
                 
                 # Reset hidden and cell states for environments that are done
                 mask = dones[t].to(dtype=torch.bool, device=self.device)
-                self.hidden[:, mask, :] = 0.0
-                self.cell[:, mask, :] = 0.0
+                self.hidden[:, mask, :] = 0.0 # type: ignore
+                self.cell[:, mask, :] = 0.0 # type: ignore
 
                 self.prev_hidden = self.hidden
                 self.prev_cell = self.cell
-                lstm_output, (self.hidden, self.cell) = self.lstm(shared_features[t].unsqueeze(0), (self.hidden.clone(), self.cell.clone()))
+                lstm_output, (self.hidden, self.cell) = self.lstm(shared_features[t].unsqueeze(0), (self.hidden.clone(), self.cell.clone())) # type: ignore
                 lstm_outputs.append(lstm_output)
             lstm_outputs = torch.cat(lstm_outputs, dim=0)
         else:
@@ -503,7 +507,7 @@ class GaussianGradientLSTMPolicy(nn.Module):
                 self.set_hidden(input_hidden)
             self.prev_hidden = self.hidden
             self.prev_cell = self.cell
-            lstm_outputs, (self.hidden, self.cell) = self.lstm(shared_features, (self.hidden.detach(), self.cell.detach()))
+            lstm_outputs, (self.hidden, self.cell) = self.lstm(shared_features, (self.hidden.detach(), self.cell.detach())) # type: ignore
 
         means = self.mean(lstm_outputs)
         stds = self.std(lstm_outputs)
