@@ -31,7 +31,7 @@ if __name__ == "__main__":
     
     # Misc setup
     set_random_seeds()
-    clear_directories(['videos', 'saved_models', 'runs'])  # TODO Make this a command line argument.
+    clear_directories(['videos', 'saved_models']) # , 'runs'])  # TODO Make this a command line argument.
     args = parser.parse_args()
     device = torch.device(
         "mps" if torch.has_mps else (# MACOS

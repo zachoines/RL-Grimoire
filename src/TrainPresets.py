@@ -666,33 +666,34 @@ class PPO2HumanoidStandupRecurrentConfig(Config):
 
 class PPO2HumanoidRecurrentConfig(Config):
     def __init__(self):
-        self.max_episode_steps = 512
-        self.num_envs = 10000
+        self.max_episode_steps = 1024
+        self.num_envs = 3500
 
         super().__init__(
             PPO2RecurrentParams(
+                tau = 0.1,
                 clip = 0.1,
-                clipped_value_loss_eps = 0.2, # Used when value_loss_clipping is enabled
-                value_loss_clipping = False, 
-                gamma = 0.99,
+                clipped_value_loss_eps = 0.1, # Used when value_loss_clipping is enabled
+                value_loss_clipping = True, 
+                gamma = 0.97,
                 policy_learning_rate = 5e-4,
-                value_learning_rate = 1e-3, # Deactivated when "combined_optimizer" enabled
+                value_learning_rate = 2.5e-4, # Deactivated when "combined_optimizer" enabled
                 entropy_coefficient = 0.1,
                 hidden_size = 128,
-                gae_lambda = .99,
+                gae_lambda = .95,
                 value_loss_weight = 0.5, # Activated when "combined_optimizer" enabled
                 max_grad_norm = 1.0,
-                use_moving_average_reward = False,
+                use_moving_average_reward = True,
                 combined_optimizer = False,
-                mini_batch_size = 64,
-                num_rounds = 32,
+                mini_batch_size = 32,
+                num_rounds = 16,
                 use_lr_scheduler = True,
                 lr_scheduler_constant_steps = 1000,
                 lr_scheduler_max_steps = 20000,
                 lr_scheduler_max_factor = 1.0,
                 lr_scheduler_min_factor = 1.0 / 100.0,
                 icm_module = ICMParams(
-                    enabled=False,
+                    enabled=True,
                     state_feature_size=64,
                     hidden_size=128,
                     alpha=0.1,
@@ -704,7 +705,7 @@ class PPO2HumanoidRecurrentConfig(Config):
                 batch_transitions_by_env_trajectory = True, # Must be enabled for PPO
                 num_epochs = 2000,
                 batches_per_epoch = 1,
-                batch_size = 32,
+                batch_size = 256,
                 updates_per_batch = 1,
                 shuffle_batches = False, # False to not interfere with GAE creation
                 preprocess_action = lambda x: x.cpu(),

@@ -65,6 +65,23 @@ def winsorize(data: torch.Tensor, batch_size: int, device: torch.device, lower_p
         upper = sorted_data[int(upper_percentile * batch_size)]
     return torch.clamp(data, lower, upper)
 
+class YeoJohnsonTransform:
+    def __init__(self, lmbda1=1.0, lmbda2=1.0):
+        self.lmbda1 = lmbda1
+        self.lmbda2 = lmbda2
+
+    def __call__(self, x):
+        out = torch.zeros_like(x)
+        pos = x >= 0  # Boolean tensor where positive values are True
+        neg = x < 0   # Boolean tensor where negative values are True
+
+        # Apply Yeo-Johnson transformation for positive and negative parts separately
+        out[pos] = ((x[pos] + 1).pow(self.lmbda1) - 1) / self.lmbda1 if self.lmbda1 != 0 else torch.log(x[pos] + 1)
+        out[neg] = -((-x[neg] + 1).pow(2 - self.lmbda2) - 1) / (2 - self.lmbda2) if self.lmbda2 != 2 else -torch.log(-x[neg] + 1)
+
+        return out
+
+
 class Normalizer:
 
     def __init__(self, mean_decay_rate: float = 0.8, variance_decay_rate: float = 0.9, eps: float = 1e-8, device: torch.device = torch.device('cpu')):
@@ -110,57 +127,6 @@ class Normalizer:
         data_norm = (data - m_hat) / (torch.sqrt(v_hat) + self.eps)  # Normalize data
         return data_norm
     
-class PID:
-    def __init__(self, target: torch.Tensor, p: torch.Tensor, i: torch.Tensor, d: torch.Tensor, windup_guard: float = 1.0, device: torch.device = torch.device("cpu")):
-        """
-        Initialize the PID controller with target value, gains, and windup guard.
-
-        :param target: The target value as a torch.Tensor.
-        :param p: The proportional gain as a torch.Tensor.
-        :param i: The integral gain as a torch.Tensor.
-        :param d: The derivative gain as a torch.Tensor.
-        :param windup_guard: The windup guard value to limit the integral term (default: 1.0).
-        :param device: The device on which the computations will be performed (default: 'cpu').
-        """
-        self.target = target.to(device)
-        self.P = p.to(device)
-        self.I = i.to(device)
-        self.D = d.to(device)
-        self.integral = torch.tensor(0., device=device)
-        self.previous_error = torch.tensor(0., device=device)
-        self.windup_guard = windup_guard
-        self.device = device
-
-    def reset(self):
-        """
-        Reset the integral and previous error to zero.
-        """
-        self.integral = torch.tensor(0., device=self.device)
-        self.previous_error = torch.tensor(0., device=self.device)
-
-    def update(self, current: torch.Tensor) -> torch.Tensor:
-        """
-        Update the PID controller, apply anti-windup mechanism, and calculate the control output.
-
-        :param current: The current value as a torch.Tensor.
-        :return: The control output as a torch.Tensor.
-        """
-        error = self.target - current
-        self.integral += error
-
-        # Apply windup guard to limit integral term
-        self.integral = torch.clamp(self.integral, -self.windup_guard, self.windup_guard)
-
-        # Compute error derivative
-        error_derivative = error - self.previous_error
-
-        # Determine control output
-        control_output = (self.P * error) + (self.D * error_derivative) + (self.I * self.integral)
-
-        self.previous_error = error
-
-        return torch.tanh(control_output)
-
 class AdaptiveNormalizer:
     def __init__(self, mean_decay_rate: float = 0.75, variance_decay_rate: float = 0.85,
                  lower_percentile: float = 0.01, upper_percentile: float = 0.99,
@@ -234,6 +200,28 @@ class AdaptiveNormalizer:
         self.variance_decay_rate = torch.clamp(self.variance_decay_rate, 0.0, 1.0)  # Clamp variance_decay_rate to [0, 1]
 
         return data_norm
+    
+class SlidingWindowNormalizer:
+    def __init__(self, window_size=512, device=torch.device("cpu")):
+        self.window_size = window_size
+        self.device = device
+        self.rewards = None
+        self.index = 0
+
+    def update(self, rewards):
+        num_steps, num_envs = rewards.size()
+        if self.rewards is None:
+            self.rewards = torch.zeros((self.window_size, num_envs), device=self.device)
+
+        for i in range(num_steps):
+            self.rewards[self.index] = rewards[i]
+            self.index = (self.index + 1) % self.window_size
+
+        mean = self.rewards.mean(dim=0, keepdim=True)
+        std = self.rewards.std(dim=0, keepdim=True)
+        normalized_rewards = (rewards - mean) / (std + 1e-8)
+        return normalized_rewards
+
 
 class RunningMeanStd:
 
@@ -329,3 +317,53 @@ class VPID:
 
         return new_velocity.item()
     
+class PID:
+    def __init__(self, target: torch.Tensor, p: torch.Tensor, i: torch.Tensor, d: torch.Tensor, windup_guard: float = 1.0, device: torch.device = torch.device("cpu")):
+        """
+        Initialize the PID controller with target value, gains, and windup guard.
+
+        :param target: The target value as a torch.Tensor.
+        :param p: The proportional gain as a torch.Tensor.
+        :param i: The integral gain as a torch.Tensor.
+        :param d: The derivative gain as a torch.Tensor.
+        :param windup_guard: The windup guard value to limit the integral term (default: 1.0).
+        :param device: The device on which the computations will be performed (default: 'cpu').
+        """
+        self.target = target.to(device)
+        self.P = p.to(device)
+        self.I = i.to(device)
+        self.D = d.to(device)
+        self.integral = torch.tensor(0., device=device)
+        self.previous_error = torch.tensor(0., device=device)
+        self.windup_guard = windup_guard
+        self.device = device
+
+    def reset(self):
+        """
+        Reset the integral and previous error to zero.
+        """
+        self.integral = torch.tensor(0., device=self.device)
+        self.previous_error = torch.tensor(0., device=self.device)
+
+    def update(self, current: torch.Tensor) -> torch.Tensor:
+        """
+        Update the PID controller, apply anti-windup mechanism, and calculate the control output.
+
+        :param current: The current value as a torch.Tensor.
+        :return: The control output as a torch.Tensor.
+        """
+        error = self.target - current
+        self.integral += error
+
+        # Apply windup guard to limit integral term
+        self.integral = torch.clamp(self.integral, -self.windup_guard, self.windup_guard)
+
+        # Compute error derivative
+        error_derivative = error - self.previous_error
+
+        # Determine control output
+        control_output = (self.P * error) + (self.D * error_derivative) + (self.I * self.integral)
+
+        self.previous_error = error
+
+        return torch.tanh(control_output)

@@ -17,7 +17,7 @@ from Datasets import Transition
 from Configurations import *
 from Policies import *
 from Networks import *
-from Utilities import to_tensor, Normalizer, winsorize
+from Utilities import to_tensor, Normalizer, winsorize, SlidingWindowNormalizer
 
 class Agent:
     def __init__(
@@ -507,7 +507,8 @@ class PPO2Recurrent(Agent):
         self.update_count = 0
         
         # Normaliers
-        self.reward_normalizer = Normalizer(device=device)
+        # self.reward_normalizer = Normalizer(device=device)
+        self.reward_normalizer = SlidingWindowNormalizer(device=device)
 
     def get_actions(self, state: torch.Tensor, dones: torch.Tensor = torch.tensor([]), eval=False, **kwargs)->tuple[Tensor, Tensor]:
         if self.is_continous():
@@ -526,6 +527,44 @@ class PPO2Recurrent(Agent):
             return action, normal.log_prob(action).sum(dim=-1), policy_hidden, critic_hidden, value # type: ignore
         else:
             raise NotImplementedError
+
+    def compute_clipped_value_loss(self, old_values, values, returns, clip_epsilon=0.2):
+        """
+        Compute the value loss for PPO with clipping.
+
+        :param old_values: The old value predictions.
+        :param values: The new value predictions.
+        :param returns: The returns (advantages + values).
+        :param clip_epsilon: The epsilon for clipping the value loss.
+        :return: The value loss.
+        """
+
+        # Detach old_values so they're treated as constants
+        old_values = old_values.detach()
+
+        # Calculate the value difference
+        value_diff = values - old_values
+
+        # Clipped values
+        abs_old_values = torch.abs(old_values)
+        clipped_values = old_values + torch.clamp(value_diff, -clip_epsilon * abs_old_values, clip_epsilon * abs_old_values)
+
+        # Unclipped loss
+        loss_unclipped = torch.square(returns - values)
+
+        # Clipped loss
+        loss_clipped = torch.square(returns - clipped_values)
+
+        # Take the minimum of the clipped and unclipped losses
+        loss = torch.min(loss_unclipped, loss_clipped).mean()
+
+        return loss
+
+        # value_pred_clipped = old_values + (values - old_values).clamp(-clip_epsilon, clip_epsilon)
+        # value_losses = torch.square(values - returns)
+        # value_losses_clipped = torch.square(value_pred_clipped - returns)
+        # value_loss = 0.5 * torch.min(value_losses, value_losses_clipped).mean()
+        # return value_loss
 
     def learn(self, batch: List[Transition], num_envs: int, batch_size: int) -> Dict[str, torch.Tensor]:
         self.update_count += 1
@@ -565,7 +604,7 @@ class PPO2Recurrent(Agent):
 
             # Update running mean and variance and normalize rewards.
             if self.hyperparams.use_moving_average_reward:
-                rewards = (rewards - rewards.mean()) / (rewards.std() + self.eps) # rewards = self.reward_normalizer.update(rewards)
+                rewards = self.reward_normalizer.update(rewards)
 
             # Compute values for states and next states
             values, _ = self.critic(states, critic_hidden, dones)
@@ -638,10 +677,7 @@ class PPO2Recurrent(Agent):
                 loss_value: torch.Tensor
                 predicted_values, _ = self.critic(mb_states, mb_critic_hidden, dones=mb_dones)
                 if self.hyperparams.value_loss_clipping:
-                    clipped_values = mb_old_values + (predicted_values - mb_old_values).clamp(-self.hyperparams.clipped_value_loss_eps, self.hyperparams.clipped_value_loss_eps)
-                    loss_value1 = F.mse_loss(predicted_values, mb_targets)
-                    loss_value2 = F.mse_loss(clipped_values, mb_targets)
-                    loss_value = torch.max(loss_value1, loss_value2).mean()
+                    loss_value = self.compute_clipped_value_loss(mb_old_values, predicted_values, mb_targets, self.hyperparams.clipped_value_loss_eps)
                 else:
                     loss_value = F.smooth_l1_loss(predicted_values, mb_targets)
                
@@ -698,6 +734,8 @@ class PPO2Recurrent(Agent):
 
         # Update the old critic network by copying the current critic network weights
         if self.hyperparams.value_loss_clipping:
+            # for target_param, param in zip(self.old_critic.parameters(recurse=True), self.critic.parameters(recurse=True)):
+            #     target_param.data.copy_(self.hyperparams.tau * param.data + (1.0 - self.hyperparams.tau) * target_param.data)
             self.old_critic.load_state_dict(self.critic.state_dict())
 
         # Compute average losses and entropy
