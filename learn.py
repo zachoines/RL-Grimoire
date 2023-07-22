@@ -90,12 +90,15 @@ if __name__ == "__main__":
     )
 
     pbar = tqdm(total=config.trainer_params.num_epochs)
-    try:
-        for epoch in trainer:
-            running_mean_std_recorder.save(loc=config.trainer_params.save_location + "NormStates")
-            pbar.update(1)
-    except:
-        print("An error was encourtered during the training process")
-    finally:
-        pbar.close()
-        env.close()
+    for epoch in trainer:
+        running_mean_std_recorder.save(loc=config.trainer_params.save_location + "NormStates")
+        pbar.update(1)
+    # try:
+    #     for epoch in trainer:
+    #         running_mean_std_recorder.save(loc=config.trainer_params.save_location + "NormStates")
+    #         pbar.update(1)
+    # except:
+    #     print("An error was encourtered during the training process")
+    # finally:
+    #     pbar.close()
+    #     env.close()

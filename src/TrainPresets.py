@@ -667,7 +667,7 @@ class PPO2HumanoidStandupRecurrentConfig(Config):
 class PPO2HumanoidRecurrentConfig(Config):
     def __init__(self):
         self.max_episode_steps = 1024
-        self.num_envs = 3500
+        self.num_envs = 4500
 
         super().__init__(
             PPO2RecurrentParams(
@@ -698,7 +698,8 @@ class PPO2HumanoidRecurrentConfig(Config):
                     hidden_size=128,
                     alpha=0.1,
                     beta=0.2,
-                    n=.5
+                    n=.5,
+                    learning_rate=1e-3
                 )
             ),
             TrainerParams(

@@ -73,6 +73,12 @@ class Agent:
 
         return returns
     
+    def save_train_state(self):
+        return None
+
+    def restore_train_state(self, state):
+        pass
+    
     def compute_gae_and_targets(self, rewards, dones, truncs, values, next_values, batch_size, gamma=0.99, lambda_=0.95):
         """
         Compute GAE and bootstrapped targets for PPO.
@@ -490,12 +496,12 @@ class PPO2Recurrent(Agent):
                 self.old_critic.load_state_dict(self.critic.state_dict())
             
             if self.hyperparams.icm_module.enabled:
-                self.ICM = ICM(
+                self.ICM = ICMRecurrent(
                     self.state_size, 
                     self.num_actions, 
                     self.hyperparams.icm_module.hidden_size, 
                     self.hyperparams.icm_module.state_feature_size, 
-                    self.device
+                    device = self.device
                 )
                 
         else:
@@ -507,10 +513,17 @@ class PPO2Recurrent(Agent):
         self.update_count = 0
         
         # Normaliers
-        # self.reward_normalizer = Normalizer(device=device)
         self.reward_normalizer = SlidingWindowNormalizer(device=device)
 
-    def get_actions(self, state: torch.Tensor, dones: torch.Tensor = torch.tensor([]), eval=False, **kwargs)->tuple[Tensor, Tensor]:
+    def save_train_state(self):
+        return self.actor.get_hidden(), self.critic.get_hidden()
+    
+    def restore_train_state(self, state):
+        actor_hidden, critic_hidden = state
+        self.actor.set_hidden(actor_hidden)
+        self.critic.set_hidden(critic_hidden)
+
+    def get_actions(self, state: torch.Tensor, dones: torch.Tensor = torch.tensor([]), eval=False, **kwargs)->tuple[Tensor]:
         if self.is_continous():
             mean, std, _ = self.actor(state.unsqueeze(0), dones=dones)
             value, _ = self.critic(state.unsqueeze(0), dones=dones)
@@ -524,7 +537,9 @@ class PPO2Recurrent(Agent):
             else:
                 action = normal.sample()
             action = action.clip(self.action_min, self.action_max)
-            return action, normal.log_prob(action).sum(dim=-1), policy_hidden, critic_hidden, value # type: ignore
+            if self.hyperparams.icm_module.enabled:
+                pass
+            return action, normal.log_prob(action).sum(dim=-1), policy_hidden, critic_hidden # type: ignore
         else:
             raise NotImplementedError
 
@@ -560,12 +575,6 @@ class PPO2Recurrent(Agent):
 
         return loss
 
-        # value_pred_clipped = old_values + (values - old_values).clamp(-clip_epsilon, clip_epsilon)
-        # value_losses = torch.square(values - returns)
-        # value_losses_clipped = torch.square(value_pred_clipped - returns)
-        # value_loss = 0.5 * torch.min(value_losses, value_losses_clipped).mean()
-        # return value_loss
-
     def learn(self, batch: List[Transition], num_envs: int, batch_size: int) -> Dict[str, torch.Tensor]:
         self.update_count += 1
         num_rounds = self.hyperparams.num_rounds
@@ -573,49 +582,45 @@ class PPO2Recurrent(Agent):
 
         with torch.no_grad():
             # Reshape batch to gathered lists
-            states, actions, next_states, rewards, dones, truncs, prev_log_probs, policy_hidden, critic_hidden, _ = map(
+            states, actions, next_states, rewards, dones, truncs, prev_log_probs, policy_hidden, critic_hidden = map(
                 torch.stack, zip(*batch)
             )
 
-            batch_rewards = rewards.clone()
+            total_batch_rewards = rewards.sum()
+            states_plus_one = torch.cat((states, next_states[-1:, :]), dim=0)
+            dones_plus_one = torch.cat((dones, torch.zeros_like(dones[-1:, :])), dim = 0)
 
-            # Run the ICM module
-            if self.hyperparams.icm_module.enabled:
-                pred_mean, pred_std, next_state_feature, next_state_feature_pred = self.ICM(states, actions, next_states)
-                
-                intrinsic_rewards = self.ICM.intrinsic_reward(
-                    next_state_feature, 
-                    next_state_feature_pred,
-                    self.hyperparams.icm_module.n
-                ).detach()
+        # Run the ICM module
+        if self.hyperparams.icm_module.enabled:
+            
+            forward_loss, inverse_loss, intrinsic_reward, _ = self.ICM(states_plus_one, actions, dones_plus_one = dones_plus_one)
+            rewards = rewards + intrinsic_reward
 
-                policy_mean, policy_std, _ = self.actor(states)
-                forward_loss, inverse_loss = self.ICM.calc_loss(
-                    policy_mean, 
-                    policy_std,
-                    next_state_feature, 
-                    next_state_feature_pred, 
-                    pred_mean,
-                    pred_std,
-                    self.hyperparams.icm_module.beta
-                )
-
-                rewards = rewards + intrinsic_rewards
+            (forward_loss + inverse_loss).backward()
+            clip_grad_norm_(self.optimizers["ICM"].param_groups[0]["params"], self.max_grad_norm) # type: ignore
+            self.optimizers["ICM"].step() # type: ignore
+            if self.hyperparams.use_lr_scheduler:
+                self.optimizers["ICM_scheduler"].step() # type: ignore 
+            self.optimizers["ICM"].zero_grad() # type: ignore
+        
+        with torch.no_grad():
 
             # Update running mean and variance and normalize rewards.
             if self.hyperparams.use_moving_average_reward:
                 rewards = self.reward_normalizer.update(rewards)
 
             # Compute values for states and next states
-            values, _ = self.critic(states, critic_hidden, dones)
-            last_next_value, _ = self.critic(next_states[-1:, :], dones=torch.zeros_like(dones[-1:, :]))  # Get the next value for the last next state
-            next_values_minus_last = values[1:, :]
-            next_values = torch.cat((next_values_minus_last, last_next_value), dim=0)
-            old_values, _ = self.old_critic(next_states, critic_hidden, dones) if self.hyperparams.value_loss_clipping else (None, None)
+            self.critic.set_hidden(critic_hidden[0, :])
+            values_plus_one, _ = self.critic(states_plus_one, dones=dones_plus_one)
+            values = values_plus_one[:-1]
+            next_values = values_plus_one[1:]
+
+            # Same as doing: old_values, _ = self.old_critic(states, dones), since the critic and old_critic networks are still in-sync
+            old_values = values.clone()
 
             # Calculate advantages with GAE
             targets, advantages_all = self.compute_gae_and_targets(
-                rewards.unsqueeze(-1),
+                rewards.unsqueeze(-1).clone(),
                 dones.unsqueeze(-1).clone(), # No cloning causes error on MPS (bug in pytorch for OSX)
                 truncs.unsqueeze(-1).clone(),
                 values,
@@ -640,7 +645,7 @@ class PPO2Recurrent(Agent):
 
                 # Mini-batch indices
                 end_idx = min(start_idx + mini_batch_size, states.size(0))
-                ids = slice(start_idx, end_idx)  # using a slice instead of a list of indices
+                ids = slice(start_idx, end_idx)
 
                 # Extract mini-batch data
                 with torch.no_grad():
@@ -652,7 +657,7 @@ class PPO2Recurrent(Agent):
                     mb_policy_hidden = policy_hidden[ids]
                     mb_critic_hidden = critic_hidden[ids]
                     mb_dones = dones[ids]
-                    mb_old_values = old_values[ids] if self.hyperparams.value_loss_clipping else None # type: ignore
+                    mb_old_values = old_values[ids]
 
                 # Compute policy distribution parameters
                 loc, scale, _ = self.actor(mb_states, mb_policy_hidden, dones=mb_dones)
@@ -670,8 +675,6 @@ class PPO2Recurrent(Agent):
                             ratio.clip(1.0 - self.hyperparams.clip, 1.0 + self.hyperparams.clip) * torch.squeeze(mb_advantages),
                         ) - (self.hyperparams.entropy_coefficient * entropy)
                     )
-                if self.hyperparams.icm_module.enabled:
-                    loss_policy = (self.hyperparams.icm_module.alpha * loss_policy) + forward_loss + inverse_loss
 
                 # Compute the value loss with clipping
                 loss_value: torch.Tensor
@@ -686,7 +689,7 @@ class PPO2Recurrent(Agent):
                     # Combine the losses
                     total_loss = (
                         (self.hyperparams.policy_loss_weight * loss_policy)
-                        # - (self.hyperparams.entropy_coefficient * entropy)
+                        - (self.hyperparams.entropy_coefficient * entropy)
                         + (self.hyperparams.value_loss_weight * loss_value)
                     )
 
@@ -694,13 +697,13 @@ class PPO2Recurrent(Agent):
                     total_loss.backward()
 
                     # Perform a single optimization step, clip gradients before step
-                    clip_grad_norm_(self.optimizers["combined"].param_groups[0]["params"], self.hyperparams.max_grad_norm)
-                    self.optimizers["combined"].step()
+                    clip_grad_norm_(self.optimizers["combined"].param_groups[0]["params"], self.hyperparams.max_grad_norm) # type: ignore
+                    self.optimizers["combined"].step() # type: ignore
                     if self.hyperparams.use_lr_scheduler:
-                        self.optimizers["combined_scheduler"].step()
+                        self.optimizers["combined_scheduler"].step() # type: ignore
 
                     # Clear the gradients
-                    self.optimizers["combined"].zero_grad()
+                    self.optimizers["combined"].zero_grad() # type: ignore
 
                     # Accumulate losses and entropy
                     total_loss_combined += total_loss.cpu()
@@ -713,18 +716,18 @@ class PPO2Recurrent(Agent):
                     loss_value.backward()
                     loss_policy.backward()
 
-                    clip_grad_norm_(self.optimizers["actor"].param_groups[0]["params"], self.max_grad_norm)
-                    clip_grad_norm_(self.optimizers["critic"].param_groups[0]["params"], self.max_grad_norm)
+                    clip_grad_norm_(self.optimizers["actor"].param_groups[0]["params"], self.max_grad_norm) # type: ignore
+                    clip_grad_norm_(self.optimizers["critic"].param_groups[0]["params"], self.max_grad_norm) # type: ignore
 
-                    self.optimizers["actor"].step()
-                    self.optimizers["critic"].step()
+                    self.optimizers["actor"].step() # type: ignore
+                    self.optimizers["critic"].step() # type: ignore
 
                     if self.hyperparams.use_lr_scheduler:
-                        self.optimizers["actor_scheduler"].step()
-                        self.optimizers["critic_scheduler"].step()
+                        self.optimizers["actor_scheduler"].step() # type: ignore
+                        self.optimizers["critic_scheduler"].step() # type: ignore
 
-                    self.optimizers["critic"].zero_grad()
-                    self.optimizers["actor"].zero_grad()
+                    self.optimizers["critic"].zero_grad() # type: ignore
+                    self.optimizers["actor"].zero_grad() # type: ignore
 
                     # Accumulate losses and entropy
                     total_loss_combined.append((loss_policy + loss_value).cpu())
@@ -733,10 +736,8 @@ class PPO2Recurrent(Agent):
                     total_entropy.append(entropy.mean().cpu())
 
         # Update the old critic network by copying the current critic network weights
-        if self.hyperparams.value_loss_clipping:
-            # for target_param, param in zip(self.old_critic.parameters(recurse=True), self.critic.parameters(recurse=True)):
-            #     target_param.data.copy_(self.hyperparams.tau * param.data + (1.0 - self.hyperparams.tau) * target_param.data)
-            self.old_critic.load_state_dict(self.critic.state_dict())
+        # if self.hyperparams.value_loss_clipping:
+        #     self.old_critic.load_state_dict(self.critic.state_dict())
 
         # Compute average losses and entropy
         total_loss_actor = torch.stack(total_loss_actor).mean()
@@ -750,13 +751,13 @@ class PPO2Recurrent(Agent):
             "Entropy": total_entropy,
             "Advantages": advantages_all.mean(),
             "Train Rewards": rewards.mean(),
-            "Total Batch Rewards": batch_rewards.sum(),
+            "Total Batch Rewards": total_batch_rewards,
             **({
-                "Combined RL Scheduler": to_tensor(self.optimizers["combined_scheduler"].get_last_lr()[0])}
+                "Combined RL Scheduler": to_tensor(self.optimizers["combined_scheduler"].get_last_lr()[0])} # type: ignore
                 if self.hyperparams.combined_optimizer
                 else {
-                    "Actor RL Scheduler": to_tensor(self.optimizers["actor_scheduler"].get_last_lr()[0]),
-                    "Critic RL Scheduler": to_tensor(self.optimizers["critic_scheduler"].get_last_lr()[0]),
+                    "Actor RL Scheduler": to_tensor(self.optimizers["actor_scheduler"].get_last_lr()[0]), # type: ignore
+                    "Critic RL Scheduler": to_tensor(self.optimizers["critic_scheduler"].get_last_lr()[0]), # type: ignore
                 }
             ),
             **({
@@ -797,11 +798,18 @@ class PPO2Recurrent(Agent):
                 }
             else:
                 actor_optimizer =  AdamW(
-                    chain(self.actor.parameters(), self.ICM.parameters()) if self.hyperparams.icm_module.enabled else self.actor.parameters(), 
+                    self.actor.parameters(), 
                     lr=self.hyperparams.policy_learning_rate
                 )
-                critic_optimizer = AdamW(self.critic.parameters(), lr=self.hyperparams.value_learning_rate)
-
+                critic_optimizer = AdamW(
+                    self.critic.parameters(), 
+                    lr=self.hyperparams.value_learning_rate
+                )
+                if self.hyperparams.icm_module.enabled:
+                    icm_optimizer = AdamW(
+                        self.ICM.parameters(), 
+                        lr=self.hyperparams.icm_module.learning_rate
+                    )
                 return {
                     "actor": actor_optimizer,
                     "critic": critic_optimizer,
@@ -812,7 +820,15 @@ class PPO2Recurrent(Agent):
                     "critic_scheduler": torch.optim.lr_scheduler.LambdaLR(
                         critic_optimizer, 
                         lr_lambda=self.create_lr_lambda()
-                    )
+                    ),
+                    **({
+                            "ICM": icm_optimizer, # type: ignore 
+                            "ICM_scheduler": torch.optim.lr_scheduler.LambdaLR(
+                                icm_optimizer,  # type: ignore
+                                lr_lambda=self.create_lr_lambda()
+                            ),
+                        } if self.hyperparams.icm_module.enabled else {}
+                    ) 
                 }
         else:
             return self.optimizers     

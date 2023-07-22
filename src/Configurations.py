@@ -12,6 +12,7 @@ class ICMParams(object):
         n (float): The scaling factor for intrinsic reward in the ICM module. i.e. scale = (n / 2). 
         hidden_size (int): The size of the hidden layers in the ICM module.
         state_feature_size (int): The size of the state feature representation in the ICM module.
+        learning_rate (float): Learning rate passed to the optimizer
     """
 
     def __init__(self,
@@ -20,7 +21,8 @@ class ICMParams(object):
             beta: float = 0.2, 
             n: float = 1,
             hidden_size: int = 256,
-            state_feature_size: int = 256
+            state_feature_size: int = 256,
+            learning_rate: float = 1e-4
         ):
         self.enabled = enabled
         self.alpha = alpha
@@ -28,6 +30,7 @@ class ICMParams(object):
         self.n = n
         self.hidden_size = hidden_size
         self.state_feature_size = state_feature_size
+        self.learning_rate = learning_rate
 
 class EnvParams(object):
     """

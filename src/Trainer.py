@@ -35,6 +35,7 @@ class Trainer:
         self.save_location = save_location
         self.writer = SummaryWriter()
         self.normalizer = normalizer
+        self.train_state = None
         self.state : torch.Tensor
         self.device = device
         self.reset()
@@ -149,6 +150,8 @@ class Trainer:
 
         # Save parameters
         if (self.current_epoch % self.train_params.save_model_frequency) == 0:
+            self.train_state = self.agent.save_train_state()
             self.save_model()
+            self.agent.restore_train_state(self.train_state)
             
         return self.current_epoch
