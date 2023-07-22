@@ -81,7 +81,6 @@ class YeoJohnsonTransform:
 
         return out
 
-
 class Normalizer:
 
     def __init__(self, mean_decay_rate: float = 0.8, variance_decay_rate: float = 0.9, eps: float = 1e-8, device: torch.device = torch.device('cpu')):
@@ -221,7 +220,6 @@ class SlidingWindowNormalizer:
         std = self.rewards.std(dim=0, keepdim=True)
         normalized_rewards = (rewards - mean) / (std + 1e-8)
         return normalized_rewards
-
 
 class RunningMeanStd:
 
