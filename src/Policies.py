@@ -428,7 +428,6 @@ class GaussianGradientLSTMPolicy(nn.Module):
 
         # Other class attributes
         self.eps = 1e-8
-        # self.min_std_value = 1e-5
         self.device = device
         self.to(self.device)
 
@@ -466,35 +465,27 @@ class GaussianGradientLSTMPolicy(nn.Module):
         # Pass through shared net 
         shared_features = self.shared_net(x.to(self.device))
 
+        # Set the initial hidden state
+        if input_hidden is not None:
+            self.set_hidden(input_hidden)
+
         # Process each sequence step, taking dones into consideration
         lstm_outputs = []
-
-        if dones is not None: # TODO: check if "and torch.any(dones):" works
-            for t in range(seq_length):
-                
-                # Set the hidden and cell states
-                if input_hidden is not None:
-                    self.set_hidden(input_hidden[t, :])
-                
-                # Reset hidden and cell states for environments that are done
+        hidden_outputs = torch.zeros(seq_length, self.num_layers * 2, batch_size, self.hidden_size).to(self.device)
+        for t in range(seq_length):
+            if dones is not None:
                 mask = dones[t].to(dtype=torch.bool, device=self.device)
-                self.hidden[:, mask, :] = 0.0 # type: ignore
-                self.cell[:, mask, :] = 0.0 # type: ignore
-
-                self.prev_hidden = self.hidden
-                self.prev_cell = self.cell
-                lstm_output, (self.hidden, self.cell) = self.lstm(shared_features[t].unsqueeze(0), (self.hidden.detach(), self.cell.detach())) # type: ignore
-                lstm_outputs.append(lstm_output)
-            lstm_outputs = torch.cat(lstm_outputs, dim=0)
-        else:
-            if input_hidden is not None:
-                self.set_hidden(input_hidden)
+                self.hidden = self.hidden * (~mask).unsqueeze(0).unsqueeze(2)
+                self.cell = self.cell * (~mask).unsqueeze(0).unsqueeze(2)
+            
             self.prev_hidden = self.hidden
             self.prev_cell = self.cell
-            lstm_outputs, (self.hidden, self.cell) = self.lstm(shared_features, (self.hidden.detach(), self.cell.detach())) # type: ignore
+            hidden_outputs[t] = self.get_hidden()
+            lstm_output, (self.hidden, self.cell) = self.lstm(shared_features[t].unsqueeze(0), (self.hidden, self.cell)) # type: ignore
+            lstm_outputs.append(lstm_output)
 
+        lstm_outputs = torch.cat(lstm_outputs, dim=0)
         means = self.mean(lstm_outputs)
         stds = self.std(lstm_outputs)
-        # stds = torch.clamp(stds, min=self.min_std_value)
 
-        return means, stds, self.get_hidden()
+        return means, stds, hidden_outputs

@@ -43,6 +43,11 @@ def test_policy(env, agent, num_episodes=5, max_steps=1024, normalizor = None,):
                 next_state, _, _, _, _ = env.step(action)
                 state = next_state
 
+def requires_grad(x: torch.Tensor):
+    x_grad = x.clone()
+    x_grad.requires_grad_(True)
+    return x_grad
+
 def to_tensor(x: Union[np.ndarray, torch.Tensor, int, float, List], device=torch.device("cpu"), dtype=torch.float32, requires_grad=True):
     if isinstance(x, np.ndarray):
         x = torch.tensor(x, device=device, dtype=dtype, requires_grad=requires_grad)

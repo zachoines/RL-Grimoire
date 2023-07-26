@@ -17,7 +17,7 @@ from Datasets import Transition
 from Configurations import *
 from Policies import *
 from Networks import *
-from Utilities import to_tensor, winsorize, SlidingWindowNormalizer, RunningMeanStdNormalizer
+from Utilities import to_tensor, requires_grad, RunningMeanStdNormalizer
 
 class Agent:
     def __init__(
@@ -524,7 +524,6 @@ class PPO2Recurrent(Agent):
         self.update_count = 0
         
         # Normaliers
-        # self.reward_normalizer = SlidingWindowNormalizer(device=device)
         self.external_reward_normalizer = RunningMeanStdNormalizer(device=device)
         self.intrinsic_reward_normalizer = RunningMeanStdNormalizer(device=device)
 
@@ -538,8 +537,8 @@ class PPO2Recurrent(Agent):
 
     def get_actions(self, state: torch.Tensor, dones: torch.Tensor = torch.tensor([]), eval=False, **kwargs)->tuple[Tensor]:
         if self.is_continous():
-            mean, std, _ = self.actor(state.unsqueeze(0), dones=dones)
-            value, _ = self.critic(state.unsqueeze(0), dones=dones)
+            mean, std, _ = self.actor(state.unsqueeze(0), dones=dones.unsqueeze(0))
+            value, _ = self.critic(state.unsqueeze(0), dones=dones.unsqueeze(0))
             critic_hidden, policy_hidden = self.critic.get_prev_hidden(), self.actor.get_prev_hidden()
             mean, std = torch.squeeze(mean), torch.squeeze(std)
             value = torch.squeeze(value)
@@ -639,8 +638,7 @@ class PPO2Recurrent(Agent):
                 rewards = rewards + rnd_intrinsic_reward
 
             # Compute values for states and next states
-            self.critic.set_hidden(critic_hidden[0, :])
-            values_plus_one, _ = self.critic(states_plus_one, dones=dones_plus_one)
+            values_plus_one, _ = self.critic(states_plus_one, input_hidden = critic_hidden[0, :].clone(), dones=dones_plus_one)
             values = values_plus_one[:-1]
             next_values = values_plus_one[1:]
             old_values = values.clone()
@@ -676,7 +674,7 @@ class PPO2Recurrent(Agent):
 
                 # Extract mini-batch data
                 with torch.no_grad():
-                    mb_icm_hidden_outputs = icm_hidden_outputs[ids] # type: ignore
+                    mb_icm_hidden_outputs = icm_hidden_outputs[ids] if self.hyperparams.icm_module.enabled else torch.tensor([])
                     mb_loc = locs[ids]
                     mb_scale = scales[ids]
                     mb_states = states[ids]
@@ -690,7 +688,7 @@ class PPO2Recurrent(Agent):
                     mb_old_values = old_values[ids]
 
                 # Compute policy distribution parameters
-                loc, scale, _ = self.actor(mb_states, mb_policy_hidden, dones=mb_dones)
+                loc, scale, _ = self.actor(mb_states, input_hidden = requires_grad(mb_policy_hidden[0, :]), dones=requires_grad(mb_dones))
                 dist = Normal(loc, scale)
                 log_probs = dist.log_prob(mb_actions).sum(dim=-1)
 
@@ -708,7 +706,7 @@ class PPO2Recurrent(Agent):
 
                 # Compute the value loss with clipping
                 loss_value: torch.Tensor
-                predicted_values, _ = self.critic(mb_states, mb_critic_hidden, dones=mb_dones)
+                predicted_values, _ = self.critic(mb_states, requires_grad(mb_critic_hidden[0, :]), dones=requires_grad(mb_dones))
                 if self.hyperparams.value_loss_clipping:
                     loss_value = self.compute_clipped_value_loss(mb_old_values, predicted_values, mb_targets, self.hyperparams.clipped_value_loss_eps)
                 else:
@@ -783,8 +781,7 @@ class PPO2Recurrent(Agent):
                 else:
                     # Optimize the models
                     loss_value.backward()
-                    loss_policy.backward()
-                        
+                    loss_policy.backward()  
 
                     clip_grad_norm_(self.optimizers["actor"].param_groups[0]["params"], self.max_grad_norm) # type: ignore
                     clip_grad_norm_(self.optimizers["critic"].param_groups[0]["params"], self.max_grad_norm) # type: ignore
@@ -810,6 +807,7 @@ class PPO2Recurrent(Agent):
         total_loss_critic = torch.stack(total_loss_critic).mean()
         total_entropy = torch.stack(total_entropy).mean()
         total_loss_combined = torch.stack(total_loss_combined).mean()
+        
         if self.rnd_module:
             total_rnd_loss = torch.stack(total_rnd_loss).mean()
 

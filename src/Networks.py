@@ -454,26 +454,29 @@ class ValueNetworkLSTM(nn.Module):
         # Process each sequence step, taking dones into consideration
         lstm_outputs = []
 
+        # Set the hidden and cell states
+        if input_hidden is not None:
+            self.set_hidden(input_hidden)
+
+        hidden_outputs = torch.zeros(seq_length, self.num_layers * 2, batch_size, self.hidden_size).to(self.device)
         for t in range(seq_length):
-            
-            # Set the hidden and cell states
-            if input_hidden is not None:
-                self.set_hidden(input_hidden[t, :])
             
             # Reset hidden and cell states for environments that are done
             if dones is not None:
                 mask = dones[t].to(dtype=torch.bool, device=self.device)
-                self.hidden[:, mask, :] = 0.0 # type: ignore
-                self.cell[:, mask, :] = 0.0 # type: ignore
+                self.hidden = self.hidden * (~mask).unsqueeze(0).unsqueeze(2)
+                self.cell = self.cell * (~mask).unsqueeze(0).unsqueeze(2)
 
             self.prev_hidden = self.hidden
             self.prev_cell = self.cell
-            lstm_output, (self.hidden, self.cell) = self.lstm(shared_features[t].unsqueeze(0), (self.hidden.detach(), self.cell.detach())) # type: ignore
+            hidden_outputs[t] = self.get_hidden()
+            lstm_output, (self.hidden, self.cell) = self.lstm(shared_features[t].unsqueeze(0), (self.hidden, self.cell)) # type: ignore
             lstm_outputs.append(lstm_output)
-        lstm_outputs = torch.cat(lstm_outputs, dim=0)
 
+        lstm_outputs = torch.cat(lstm_outputs, dim=0)
         value = self.value_net(lstm_outputs)
-        return value, self.get_hidden()
+        return value, hidden_outputs
+
 
 class ICM(nn.Module):
     def __init__(self, state_dim: int, action_dim: int, hidden_size: int, state_feature_dim: int, device: torch.device = torch.device("cpu")):
