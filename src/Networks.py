@@ -439,6 +439,7 @@ class ValueNetworkLSTM(nn.Module):
 
     def set_hidden(self, hidden):
         """Set the hidden state and cell state to a specific value."""
+        self.hidden, self.cell = torch.split(hidden.clone(), hidden.size(0) // 2, dim=0)
 
     def forward(self, x, input_hidden=None, dones=None):
         seq_length, batch_size, *_ = x.size() 
@@ -549,8 +550,7 @@ class ICM(nn.Module):
 
         # return the losses, the intrinsic reward
         return forward_loss, inverse_loss, intrinsic_reward
-
-    
+   
 class ICMRecurrent(nn.Module):
     def __init__(self, state_dim: int, action_dim: int, hidden_size: int, state_feature_dim: int, num_layers = 1, device: torch.device = torch.device("cpu")):
         """
@@ -576,6 +576,8 @@ class ICMRecurrent(nn.Module):
         self.feature_network = nn.Sequential(
             nn.Linear(state_dim, hidden_size),
             nn.ReLU(),
+            nn.Linear(hidden_size, hidden_size),
+            nn.ReLU()
         ).to(self.device)
         
         # LSTM layer
@@ -588,7 +590,7 @@ class ICMRecurrent(nn.Module):
 
         # Forward Model
         self.forward_model = nn.Sequential(
-            nn.Linear(state_feature_dim + action_dim, hidden_size),
+            nn.Linear(state_feature_dim + (action_dim * 2), hidden_size),
             nn.ReLU(),
             nn.Linear(hidden_size, state_feature_dim)
         ).to(self.device)
@@ -598,13 +600,13 @@ class ICMRecurrent(nn.Module):
             nn.Linear(state_feature_dim * 2, hidden_size),
             nn.ReLU(),
             nn.Linear(hidden_size, action_dim),
-            nn.Tanh()  # Added Tanh activation
+            nn.Tanh()
         ).to(self.device)
         self.inverse_model_log_std = nn.Sequential(
             nn.Linear(state_feature_dim * 2, hidden_size),
             nn.ReLU(),
             nn.Linear(hidden_size, action_dim),
-            nn.Softplus()  # Added Softplus activation
+            nn.Softplus()
         ).to(self.device)
 
     def init_hidden(self, batch_size):
@@ -620,19 +622,20 @@ class ICMRecurrent(nn.Module):
 
     def set_hidden(self, hidden):
         """Set the hidden state and cell state to a specific value."""
-        self.hidden, self.cell = torch.split(hidden, hidden.size(0) // 2, dim=0)
+        self.hidden, self.cell = torch.split(hidden.clone().detach(), hidden.size(0) // 2, dim=0)
 
-    def forward(self, states_plus_one: torch.Tensor, action: torch.Tensor, n: float = 0.5, beta: float = 0.2, dones_plus_one=None, input_hidden=None) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def forward(self, states_plus_one: torch.Tensor, loc: torch.Tensor, scale: torch.Tensor, dones_plus_one=None, input_hidden=None, n: float = 0.5, beta: float = 0.2) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Run the ICMRecurrent.
 
         Args:
             states_plus_one (torch.Tensor): The states plus one next state.
-            action (torch.Tensor): The action taken. 
-            n (float): scaler for intrinsic rewards.
-            beta (float): Weighing term that balances forward and inverse loss.
+            loc (torch.Tensor): The loc of the action distribution.
+            scale (torch.Tensor): The scale of the action distribution.
             dones_plus_one (torch.Tensor): Done flags indicating the end of episodes, plus one done for the next state.
             input_hidden (torch.Tensor): The input hidden state for LSTM.
+            n (float): scaler for intrinsic rewards.
+            beta (float): Weighing term that balances forward and inverse loss.
 
         Returns:
             torch.Tensor: The forward model loss.
@@ -646,13 +649,15 @@ class ICMRecurrent(nn.Module):
             self.init_hidden(batch_size)
 
         state_plus_one = states_plus_one.to(self.device)
-        action = action.to(self.device)
+        loc = loc.to(self.device)
+        scale = scale.to(self.device)
         
         # Feature Network
         state_plus_one_features = self.feature_network(state_plus_one)
 
         # LSTM for the feature network
         lstm_outputs = []
+        hidden_outputs = torch.zeros(seq_length, self.num_layers * 2, batch_size, self.state_feature_dim).to(self.device)  # Initialize tensor for hidden states
         for t in range(seq_length):
             if input_hidden is not None:
                 self.set_hidden(input_hidden[t, :])
@@ -662,32 +667,33 @@ class ICMRecurrent(nn.Module):
                 self.hidden[:, mask, :] = 0.0 # type: ignore
                 self.cell[:, mask, :] = 0.0 # type: ignore
             
+            hidden_outputs[t] = self.get_hidden()  # Store hidden states in tensor
             lstm_output, (self.hidden, self.cell) = self.lstm(state_plus_one_features[t].unsqueeze(0), (self.hidden.detach(), self.cell.detach())) # type: ignore
             lstm_outputs.append(lstm_output)
+            
         state_plus_one_features = torch.cat(lstm_outputs, dim=0)
 
         state_features = state_plus_one_features[:-1]  # All states except the last one
         next_state_features = state_plus_one_features[1:]  # All states except the first one
 
         # Forward Model
-        x = torch.cat([state_features, action], dim=2)
+        x = torch.cat([state_features, loc, scale], dim=2)
         predicted_next_state_feature = self.forward_model(x)
 
         # Inverse Model
         x = torch.cat([state_features, predicted_next_state_feature], dim=2)
-        mu = self.inverse_model_mu(x)
-        log_std = self.inverse_model_log_std(x)
-        predicted_action_dist = distributions.Normal(mu, log_std)
+        predicted_loc = self.inverse_model_mu(x)
+        predicted_scale = self.inverse_model_log_std(x)
 
         forward_loss_per_state = F.mse_loss(predicted_next_state_feature, next_state_features.detach(), reduction='none')
         forward_loss = beta * forward_loss_per_state.mean()
-        inverse_loss = (1 - beta) * -predicted_action_dist.log_prob(action.detach()).mean()
+        inverse_loss = (1 - beta) * (F.mse_loss(predicted_loc, loc.detach()) + F.mse_loss(predicted_scale, scale.detach()))
 
         # Intrinsic reward is the forward loss for each state
         intrinsic_reward = n * forward_loss_per_state.mean(-1).squeeze(-1).detach()
 
         # return the losses, the intrinsic reward and the current LSTM hidden state
-        return forward_loss, inverse_loss, intrinsic_reward
+        return forward_loss, inverse_loss, intrinsic_reward, hidden_outputs
 
 class RND(nn.Module):
     def __init__(self, input_dim: int, hidden_dim: int, feature_dim: int, device: torch.device = torch.device("cpu")):

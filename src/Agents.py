@@ -496,7 +496,7 @@ class PPO2Recurrent(Agent):
                 self.old_critic.load_state_dict(self.critic.state_dict())
             
             if self.hyperparams.icm_module.enabled:
-                self.ICM = ICM(
+                self.ICM = ICMRecurrent(
                     self.state_size, 
                     self.num_actions, 
                     self.hyperparams.icm_module.hidden_size, 
@@ -603,9 +603,17 @@ class PPO2Recurrent(Agent):
     
 
         # Run the ICM module
-        icm_intrinsic_reward = None
+        icm_intrinsic_reward: torch.Tensor
+        icm_hidden_outputs: torch.Tensor
         if self.hyperparams.icm_module.enabled:
-            _, _, icm_intrinsic_reward = self.ICM(
+            # _, _, icm_intrinsic_reward = self.ICM(
+            #     states_plus_one, 
+            #     locs, 
+            #     scales,
+            #     n = self.hyperparams.icm_module.n,
+            #     beta = self.hyperparams.icm_module.beta
+            # )
+            _, _, icm_intrinsic_reward, icm_hidden_outputs = self.ICM(
                 states_plus_one, 
                 locs, 
                 scales,
@@ -668,6 +676,7 @@ class PPO2Recurrent(Agent):
 
                 # Extract mini-batch data
                 with torch.no_grad():
+                    mb_icm_hidden_outputs = icm_hidden_outputs[ids] # type: ignore
                     mb_loc = locs[ids]
                     mb_scale = scales[ids]
                     mb_states = states[ids]
@@ -677,7 +686,7 @@ class PPO2Recurrent(Agent):
                     mb_targets = targets[ids]
                     mb_policy_hidden = policy_hidden[ids]
                     mb_critic_hidden = critic_hidden[ids]
-                    mb_dones = dones[ids]
+                    mb_dones = dones_plus_one[ids]
                     mb_old_values = old_values[ids]
 
                 # Compute policy distribution parameters
@@ -716,10 +725,20 @@ class PPO2Recurrent(Agent):
                     total_rnd_loss.append(rnd_loss.cpu())
 
                 if self.hyperparams.icm_module.enabled:
-                    forward_loss, inverse_loss, _ = self.ICM(
+                    # forward_loss, inverse_loss, _ = self.ICM(
+                    #     torch.cat((mb_states, mb_states[-1:, :]), dim=0), 
+                    #     mb_loc, 
+                    #     mb_scale,
+                    #     n = self.hyperparams.icm_module.n,
+                    #     beta = self.hyperparams.icm_module.beta
+                    # )
+
+                    forward_loss, inverse_loss, _, _ = self.ICM(
                         torch.cat((mb_states, mb_states[-1:, :]), dim=0), 
                         mb_loc, 
                         mb_scale,
+                        dones_plus_one = torch.cat((mb_dones, mb_dones[-1:, :]), dim=0),
+                        input_hidden = torch.cat((mb_icm_hidden_outputs, mb_icm_hidden_outputs[-1:, :]), dim=0),
                         n = self.hyperparams.icm_module.n,
                         beta = self.hyperparams.icm_module.beta
                     )
