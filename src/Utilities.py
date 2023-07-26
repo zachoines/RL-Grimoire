@@ -81,7 +81,7 @@ class YeoJohnsonTransform:
 
         return out
 
-class Normalizer:
+class AdamNormalizer:
 
     def __init__(self, mean_decay_rate: float = 0.8, variance_decay_rate: float = 0.9, eps: float = 1e-8, device: torch.device = torch.device('cpu')):
         self.mean_decay_rate = mean_decay_rate
@@ -92,7 +92,7 @@ class Normalizer:
         self.t = torch.tensor(0., device=device)  # Timestep initialization
         self.device = device
 
-    def update(self, data: torch.Tensor, log_rewards: bool=True) -> torch.Tensor:
+    def update(self, data: torch.Tensor, log_rewards: bool=False) -> torch.Tensor:
         """
         Update the running mean and variance using data and normalize data.
 
@@ -125,83 +125,9 @@ class Normalizer:
         v_hat = self.v / (1 - self.variance_decay_rate ** self.t)  # Bias-corrected variance estimate
         data_norm = (data - m_hat) / (torch.sqrt(v_hat) + self.eps)  # Normalize data
         return data_norm
-    
-class AdaptiveNormalizer:
-    def __init__(self, mean_decay_rate: float = 0.75, variance_decay_rate: float = 0.85,
-                 lower_percentile: float = 0.01, upper_percentile: float = 0.99,
-                 device: torch.device = torch.device('cpu')):
-        self.eps = 1e-8
-        self.m = torch.tensor(0., device=device)  # Running mean initialization
-        self.v = torch.tensor(self.eps, device=device)  # Running variance initialization
-        self.t = torch.tensor(0., device=device)  # Timestep initialization
-        self.lower_percentile = lower_percentile
-        self.upper_percentile = upper_percentile
-        self.device = device
-        self.mean_pid = PID(target=torch.tensor(0.0, device=device),
-                            p=torch.tensor(1.0, device=device),
-                            i=torch.tensor(0.1, device=device),
-                            d=torch.tensor(0.05, device=device),
-                            windup_guard=1.0,
-                            device=device)
-        self.variance_pid = PID(target=torch.tensor(1.0, device=device),
-                                p=torch.tensor(1.0, device=device),
-                                i=torch.tensor(0.1, device=device),
-                                d=torch.tensor(0.05, device=device),
-                                windup_guard=1.0,
-                                device=device)
-
-        # Clamp the initial mean_decay_rate and variance_decay_rate to the range [0, 1]
-        self.mean_decay_rate = torch.clamp(torch.tensor(mean_decay_rate, device=device), 0.0, 1.0)
-        self.variance_decay_rate = torch.clamp(torch.tensor(variance_decay_rate, device=device), 0.0, 1.0)
-
-    def update(self, data: torch.Tensor, log_rewards: bool = True) -> torch.Tensor:
-        """
-        Update the running mean and variance using data and normalize data.
-        :param data: Tensor of data with any shape.
-        :return: Normalized data with the same shape as input.
-        """
-        data = data.to(self.device)  # Ensure data is on the correct device
-        if log_rewards:
-            data = torch.where(data >= 0, torch.log(data + 1e-6), -torch.log(-data + 1e-6))
-        data_flattened = data.view(-1)  # Flatten the data tensor
-        batch_size = data_flattened.shape[0]
-
-        # Winsorize the data
-        if self.device.type == 'cpu' or self.device.type.startswith('cuda'):
-            lower = data_flattened.kthvalue(int(self.lower_percentile * batch_size)).values
-            upper = data_flattened.kthvalue(int(self.upper_percentile * batch_size)).values
-        else:
-            sorted_data, _ = torch.sort(data_flattened)
-            lower = sorted_data[int(self.lower_percentile * batch_size)]
-            upper = sorted_data[int(self.upper_percentile * batch_size)]
-        data_flattened = torch.clamp(data_flattened, lower, upper)
-
-        # If this is the first batch, initialize the running mean and variance with the sample mean and variance
-        if self.t == 0:
-            self.m = data_flattened.mean()
-            self.v = data_flattened.var(unbiased=False)
-        else:
-            self.m = self.mean_decay_rate * self.m + (1 - self.mean_decay_rate) * data_flattened.mean()  # Update running mean
-            var_update = self.variance_decay_rate * self.v + (1 - self.variance_decay_rate) * data_flattened.var(unbiased=False)  # Compute running variance update
-            self.v = torch.max(var_update, torch.tensor(self.eps, device=self.device, dtype=torch.float32))  # Update running variance
-        
-        self.t += batch_size  # Increment timestep by batch size
-        m_hat = self.m / (1 - self.mean_decay_rate ** self.t)  # Bias-corrected mean estimate
-        v_hat = self.v / (1 - self.variance_decay_rate ** self.t)  # Bias-corrected variance estimate
-
-        data_norm = (data - m_hat) / (torch.sqrt(v_hat) + self.eps)  # Normalize data
-
-        # Update PID controllers with statistics of normalized data
-        self.mean_decay_rate += self.mean_pid.update(data_norm.mean())
-        self.mean_decay_rate = torch.clamp(self.mean_decay_rate, 0.0, 1.0)  # Clamp mean_decay_rate to [0, 1]
-
-        self.variance_decay_rate += self.variance_pid.update(data_norm.var(unbiased=False))
-        self.variance_decay_rate = torch.clamp(self.variance_decay_rate, 0.0, 1.0)  # Clamp variance_decay_rate to [0, 1]
-
-        return data_norm
-    
+  
 class SlidingWindowNormalizer:
-    def __init__(self, window_size=512, device=torch.device("cpu")):
+    def __init__(self, window_size=2024, device=torch.device("cpu")):
         self.window_size = window_size
         self.device = device
         self.rewards = None
@@ -220,6 +146,71 @@ class SlidingWindowNormalizer:
         std = self.rewards.std(dim=0, keepdim=True)
         normalized_rewards = (rewards - mean) / (std + 1e-8)
         return normalized_rewards
+    
+class RunningMeanStdNormalizer:
+    def __init__(self, epsilon: float = 1e-4, device: torch.device = torch.device("cpu")):
+        """
+        Initialize a Running Mean Standard Deviation Normalizer.
+
+        Args:
+            epsilon (float): A small constant to prevent division by zero.
+            device (torch.device): The device to run the calculations on.
+        """
+        # Initialize the mean and variance to None. They will be initialized later based on the shape of the input data.
+        self.mean = None
+        self.var = None
+
+        # Initialize the count to a small value to prevent division by zero.
+        self.count = epsilon
+
+        # Store the device to run the calculations on.
+        self.device = device
+
+    def update(self, x: torch.Tensor):
+        """
+        Normalize a tensor with the running mean and standard deviation.
+
+        Args:
+            x (torch.Tensor): The tensor to normalize.
+
+        Returns:
+            torch.Tensor: The normalized tensor.
+        """
+        # If the mean and variance are not initialized, initialize them based on the shape of the input data.
+        if self.mean is None or self.var is None:
+            self.mean = torch.zeros(x.shape[1:]).to(self.device)  # Initialize the mean to zeros.
+            self.var = torch.ones(x.shape[1:]).to(self.device)  # Initialize the variance to ones.
+
+        # Calculate the mean and variance of the new data.
+        batch_mean = torch.mean(x, dim=0)  # Mean of the new data.
+        batch_var = torch.var(x, dim=0)  # Variance of the new data.
+        batch_count = x.size(0)  # Number of new data points.
+
+        # Calculate the delta between the new mean and the current mean.
+        delta = batch_mean - self.mean
+
+        # Calculate the total count of data points seen so far.
+        tot_count = self.count + batch_count
+
+        # Update the mean based on the new data.
+        self.mean = self.mean + delta * batch_count / tot_count
+
+        # Calculate the sum of the variances of the old data and the new data.
+        m_a = self.var * self.count  # Variance of the old data times the number of old data points.
+        m_b = batch_var * batch_count  # Variance of the new data times the number of new data points.
+
+        # Calculate the sum of the squares of the differences between the means of the old data and the new data.
+        M2 = m_a + m_b + delta**2 * self.count * batch_count / tot_count
+
+        # Update the variance based on the new data.
+        self.var = M2 / tot_count
+
+        # Update the total count of data points seen so far.
+        self.count = tot_count
+
+        # Normalize the input tensor using the updated mean and variance and return it.
+        return (x - self.mean) / torch.sqrt(self.var + 1e-8)
+
 
 class RunningMeanStd:
 

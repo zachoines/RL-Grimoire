@@ -1,7 +1,6 @@
 import torch
 from torch import nn
 from torch.nn import functional as F
-from typing import Tuple
 import math
 
 class DiscreteGradientPolicy(nn.Module):
@@ -394,7 +393,7 @@ class GaussianGradientLSTMPolicy(nn.Module):
             in_features: int, 
             out_features: int, 
             hidden_size: int, 
-            num_layers = 2,
+            num_layers = 1,
             device: torch.device = torch.device("cpu")
     ):
         super().__init__()
@@ -429,7 +428,7 @@ class GaussianGradientLSTMPolicy(nn.Module):
 
         # Other class attributes
         self.eps = 1e-8
-        self.min_std_value = 1e-5
+        # self.min_std_value = 1e-5
         self.device = device
         self.to(self.device)
 
@@ -439,8 +438,6 @@ class GaussianGradientLSTMPolicy(nn.Module):
         self.cell = None  # Cell state
         self.prev_hidden = None  # Previous hidden state
         self.prev_cell = None  # Previous cell state
-
-        # self.init_weights()
 
     def init_hidden(self, batch_size: int):
         """Initialize the hidden state and cell state for a new batch."""
@@ -455,22 +452,9 @@ class GaussianGradientLSTMPolicy(nn.Module):
         """Return the previous hidden and cell states concatenated."""
         return torch.cat((self.prev_hidden, self.prev_cell), dim=0) # type: ignore
 
-    def set_hidden(self, hidden):
+    def set_hidden(self, hidden: torch.Tensor):
         """Set the hidden state and cell state to a specific value."""
-        self.hidden, self.cell = torch.split(hidden, 2, dim=0)
-
-    def init_weights(self):
-        """Initialize the network weights."""
-        for module in self.modules():
-            if isinstance(module, nn.Linear):
-                nn.init.xavier_uniform_(module.weight)
-                nn.init.constant_(module.bias, 0.0)
-            elif isinstance(module, nn.LSTM):
-                for name, param in module.named_parameters():
-                    if 'weight' in name:
-                        nn.init.xavier_uniform_(param)
-                    elif 'bias' in name:
-                        nn.init.constant_(param, 0.0)
+        self.hidden, self.cell = torch.split(hidden.clone(), hidden.size(0) // 2, dim=0)
 
     def forward(self, x, input_hidden=None, dones=None):
         seq_length, batch_size, *_ = x.size() 
@@ -499,7 +483,7 @@ class GaussianGradientLSTMPolicy(nn.Module):
 
                 self.prev_hidden = self.hidden
                 self.prev_cell = self.cell
-                lstm_output, (self.hidden, self.cell) = self.lstm(shared_features[t].unsqueeze(0), (self.hidden.clone(), self.cell.clone())) # type: ignore
+                lstm_output, (self.hidden, self.cell) = self.lstm(shared_features[t].unsqueeze(0), (self.hidden.detach(), self.cell.detach())) # type: ignore
                 lstm_outputs.append(lstm_output)
             lstm_outputs = torch.cat(lstm_outputs, dim=0)
         else:
@@ -511,6 +495,6 @@ class GaussianGradientLSTMPolicy(nn.Module):
 
         means = self.mean(lstm_outputs)
         stds = self.std(lstm_outputs)
-        stds = torch.clamp(stds, min=self.min_std_value)
+        # stds = torch.clamp(stds, min=self.min_std_value)
 
         return means, stds, self.get_hidden()

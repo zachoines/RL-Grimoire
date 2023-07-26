@@ -667,17 +667,17 @@ class PPO2HumanoidStandupRecurrentConfig(Config):
 class PPO2HumanoidRecurrentConfig(Config):
     def __init__(self):
         self.max_episode_steps = 1024
-        self.num_envs = 4500
+        self.num_envs = 512
 
         super().__init__(
             PPO2RecurrentParams(
-                tau = 0.1,
-                clip = 0.1,
-                clipped_value_loss_eps = 0.1, # Used when value_loss_clipping is enabled
+                tau = 0.2,
+                clip = 0.2,
+                clipped_value_loss_eps = 0.2, # Used when value_loss_clipping is enabled
                 value_loss_clipping = True, 
                 gamma = 0.97,
-                policy_learning_rate = 5e-4,
-                value_learning_rate = 2.5e-4, # Deactivated when "combined_optimizer" enabled
+                policy_learning_rate = 1e-3,
+                value_learning_rate = 5e-4, # Deactivated when "combined_optimizer" enabled
                 entropy_coefficient = 0.1,
                 hidden_size = 128,
                 gae_lambda = .95,
@@ -688,8 +688,8 @@ class PPO2HumanoidRecurrentConfig(Config):
                 mini_batch_size = 32,
                 num_rounds = 16,
                 use_lr_scheduler = True,
-                lr_scheduler_constant_steps = 1000,
-                lr_scheduler_max_steps = 20000,
+                lr_scheduler_constant_steps = 2000,
+                lr_scheduler_max_steps = 40000,
                 lr_scheduler_max_factor = 1.0,
                 lr_scheduler_min_factor = 1.0 / 100.0,
                 icm_module = ICMParams(
@@ -698,8 +698,8 @@ class PPO2HumanoidRecurrentConfig(Config):
                     hidden_size=128,
                     alpha=0.1,
                     beta=0.2,
-                    n=.5,
-                    learning_rate=1e-3
+                    n=5.0,
+                    learning_rate=2.5e-4
                 )
             ),
             TrainerParams(

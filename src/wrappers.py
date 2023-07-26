@@ -100,7 +100,6 @@ class FrameStack(gym.Wrapper):
         """
         return self.frames.permute([1, 2, 0]) if len(self.frames.shape) > 2 else self.frames
 
-
 class ActionRepeatWrapper(gym.Wrapper):
     def __init__(self, env, repeat):
         super(ActionRepeatWrapper, self).__init__(env)

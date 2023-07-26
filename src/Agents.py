@@ -17,7 +17,7 @@ from Datasets import Transition
 from Configurations import *
 from Policies import *
 from Networks import *
-from Utilities import to_tensor, Normalizer, winsorize, SlidingWindowNormalizer
+from Utilities import to_tensor, winsorize, SlidingWindowNormalizer, RunningMeanStdNormalizer
 
 class Agent:
     def __init__(
@@ -496,7 +496,7 @@ class PPO2Recurrent(Agent):
                 self.old_critic.load_state_dict(self.critic.state_dict())
             
             if self.hyperparams.icm_module.enabled:
-                self.ICM = ICMRecurrent(
+                self.ICM = ICM(
                     self.state_size, 
                     self.num_actions, 
                     self.hyperparams.icm_module.hidden_size, 
@@ -507,13 +507,26 @@ class PPO2Recurrent(Agent):
         else:
             raise NotImplementedError
         
+        # RND network module
+        self.rnd_module = False
+
+        if self.rnd_module:
+            self.RND = RND(
+                self.state_size,
+                128,
+                64,
+                self.device
+            )
+        
         # Optimizers and schedulers
         self.optimizers = None
         self.optimizers = self.get_optimizers()
         self.update_count = 0
         
         # Normaliers
-        self.reward_normalizer = SlidingWindowNormalizer(device=device)
+        # self.reward_normalizer = SlidingWindowNormalizer(device=device)
+        self.external_reward_normalizer = RunningMeanStdNormalizer(device=device)
+        self.intrinsic_reward_normalizer = RunningMeanStdNormalizer(device=device)
 
     def save_train_state(self):
         return self.actor.get_hidden(), self.critic.get_hidden()
@@ -537,9 +550,7 @@ class PPO2Recurrent(Agent):
             else:
                 action = normal.sample()
             action = action.clip(self.action_min, self.action_max)
-            if self.hyperparams.icm_module.enabled:
-                pass
-            return action, normal.log_prob(action).sum(dim=-1), policy_hidden, critic_hidden # type: ignore
+            return action, normal.log_prob(action).sum(dim=-1), policy_hidden, critic_hidden, mean, std  # type: ignore
         else:
             raise NotImplementedError
 
@@ -582,40 +593,48 @@ class PPO2Recurrent(Agent):
 
         with torch.no_grad():
             # Reshape batch to gathered lists
-            states, actions, next_states, rewards, dones, truncs, prev_log_probs, policy_hidden, critic_hidden = map(
+            states, actions, next_states, rewards, dones, truncs, prev_log_probs, policy_hidden, critic_hidden, locs, scales = map(
                 torch.stack, zip(*batch)
             )
 
             total_batch_rewards = rewards.sum()
             states_plus_one = torch.cat((states, next_states[-1:, :]), dim=0)
             dones_plus_one = torch.cat((dones, torch.zeros_like(dones[-1:, :])), dim = 0)
+    
 
         # Run the ICM module
+        icm_intrinsic_reward = None
         if self.hyperparams.icm_module.enabled:
-            
-            forward_loss, inverse_loss, intrinsic_reward, _ = self.ICM(states_plus_one, actions, dones_plus_one = dones_plus_one)
-            rewards = rewards + intrinsic_reward
+            _, _, icm_intrinsic_reward = self.ICM(
+                states_plus_one, 
+                locs, 
+                scales,
+                n = self.hyperparams.icm_module.n,
+                beta = self.hyperparams.icm_module.beta
+            )
 
-            (forward_loss + inverse_loss).backward()
-            clip_grad_norm_(self.optimizers["ICM"].param_groups[0]["params"], self.max_grad_norm) # type: ignore
-            self.optimizers["ICM"].step() # type: ignore
-            if self.hyperparams.use_lr_scheduler:
-                self.optimizers["ICM_scheduler"].step() # type: ignore 
-            self.optimizers["ICM"].zero_grad() # type: ignore
+        rnd_intrinsic_reward = None
+        if self.rnd_module:
+            rnd_intrinsic_reward = self.RND(states)
         
         with torch.no_grad():
 
             # Update running mean and variance and normalize rewards.
             if self.hyperparams.use_moving_average_reward:
-                rewards = self.reward_normalizer.update(rewards)
+                rewards = self.external_reward_normalizer.update(rewards)
+            
+            if self.hyperparams.icm_module.enabled:
+                icm_intrinsic_reward = self.intrinsic_reward_normalizer.update(icm_intrinsic_reward) # type: ignore
+                rewards = rewards + icm_intrinsic_reward
+
+            if self.rnd_module:
+                rewards = rewards + rnd_intrinsic_reward
 
             # Compute values for states and next states
             self.critic.set_hidden(critic_hidden[0, :])
             values_plus_one, _ = self.critic(states_plus_one, dones=dones_plus_one)
             values = values_plus_one[:-1]
             next_values = values_plus_one[1:]
-
-            # Same as doing: old_values, _ = self.old_critic(states, dones), since the critic and old_critic networks are still in-sync
             old_values = values.clone()
 
             # Calculate advantages with GAE
@@ -631,7 +650,7 @@ class PPO2Recurrent(Agent):
             )
 
         # Initialize loss and entropy accumulators
-        total_loss_combined, total_loss_actor, total_loss_critic, total_entropy = [], [], [], []
+        total_loss_combined, total_loss_actor, total_loss_critic, total_entropy, total_rnd_loss, total_icm_forward_loss, total_icm_inverse_loss = [], [], [], [], [], [], []
 
         # Perform multiple rounds of learning
         for _ in range(num_rounds):
@@ -649,6 +668,8 @@ class PPO2Recurrent(Agent):
 
                 # Extract mini-batch data
                 with torch.no_grad():
+                    mb_loc = locs[ids]
+                    mb_scale = scales[ids]
                     mb_states = states[ids]
                     mb_actions = actions[ids]
                     mb_prev_log_probs = prev_log_probs[ids]
@@ -683,6 +704,35 @@ class PPO2Recurrent(Agent):
                     loss_value = self.compute_clipped_value_loss(mb_old_values, predicted_values, mb_targets, self.hyperparams.clipped_value_loss_eps)
                 else:
                     loss_value = F.smooth_l1_loss(predicted_values, mb_targets)
+
+                if self.rnd_module:
+                    rnd_loss = F.mse_loss(self.RND.predictor_network(mb_states), self.RND.target_network(mb_states).detach())
+                    rnd_loss.backward()
+                    clip_grad_norm_(self.optimizers["RND"].param_groups[0]["params"], self.max_grad_norm) # type: ignore
+                    self.optimizers["RND"].step() # type: ignore
+                    if self.hyperparams.use_lr_scheduler:
+                        self.optimizers["RND_scheduler"].step() # type: ignore
+                    self.optimizers["RND"].zero_grad() # type: ignore
+                    total_rnd_loss.append(rnd_loss.cpu())
+
+                if self.hyperparams.icm_module.enabled:
+                    forward_loss, inverse_loss, _ = self.ICM(
+                        torch.cat((mb_states, mb_states[-1:, :]), dim=0), 
+                        mb_loc, 
+                        mb_scale,
+                        n = self.hyperparams.icm_module.n,
+                        beta = self.hyperparams.icm_module.beta
+                    )
+
+                    total_icm_forward_loss.append(forward_loss.cpu())
+                    total_icm_inverse_loss.append(inverse_loss.cpu())
+
+                    (forward_loss + inverse_loss).backward()
+                    clip_grad_norm_(self.optimizers["ICM"].param_groups[0]["params"], self.max_grad_norm) # type: ignore
+                    self.optimizers["ICM"].step() # type: ignore
+                    if self.hyperparams.use_lr_scheduler:
+                        self.optimizers["ICM_scheduler"].step() # type: ignore 
+                    self.optimizers["ICM"].zero_grad() # type: ignore
                
                 if self.hyperparams.combined_optimizer:
 
@@ -715,10 +765,11 @@ class PPO2Recurrent(Agent):
                     # Optimize the models
                     loss_value.backward()
                     loss_policy.backward()
+                        
 
                     clip_grad_norm_(self.optimizers["actor"].param_groups[0]["params"], self.max_grad_norm) # type: ignore
                     clip_grad_norm_(self.optimizers["critic"].param_groups[0]["params"], self.max_grad_norm) # type: ignore
-
+                    
                     self.optimizers["actor"].step() # type: ignore
                     self.optimizers["critic"].step() # type: ignore
 
@@ -728,22 +779,26 @@ class PPO2Recurrent(Agent):
 
                     self.optimizers["critic"].zero_grad() # type: ignore
                     self.optimizers["actor"].zero_grad() # type: ignore
-
+                    
                     # Accumulate losses and entropy
                     total_loss_combined.append((loss_policy + loss_value).cpu())
                     total_loss_actor.append(loss_policy.cpu())
                     total_loss_critic.append(loss_value.cpu())
                     total_entropy.append(entropy.mean().cpu())
 
-        # Update the old critic network by copying the current critic network weights
-        # if self.hyperparams.value_loss_clipping:
-        #     self.old_critic.load_state_dict(self.critic.state_dict())
-
         # Compute average losses and entropy
         total_loss_actor = torch.stack(total_loss_actor).mean()
         total_loss_critic = torch.stack(total_loss_critic).mean()
         total_entropy = torch.stack(total_entropy).mean()
         total_loss_combined = torch.stack(total_loss_combined).mean()
+        if self.rnd_module:
+            total_rnd_loss = torch.stack(total_rnd_loss).mean()
+
+        if self.hyperparams.icm_module.enabled:
+            total_icm_forward_loss = torch.stack(total_icm_forward_loss).mean()
+            total_icm_inverse_loss = torch.stack(total_icm_inverse_loss).mean()
+        
+
         return {
             "Actor loss": total_loss_actor,
             "Critic loss": total_loss_critic,
@@ -752,20 +807,34 @@ class PPO2Recurrent(Agent):
             "Advantages": advantages_all.mean(),
             "Train Rewards": rewards.mean(),
             "Total Batch Rewards": total_batch_rewards,
-            **({
-                "Combined RL Scheduler": to_tensor(self.optimizers["combined_scheduler"].get_last_lr()[0])} # type: ignore
+            **(
+                {
+                    "RND Reward" : rnd_intrinsic_reward.mean(), # type: ignore
+                    "RND loss" : total_rnd_loss,
+                }
+                if self.rnd_module
+                else {}
+            ),
+            **(
+                {
+                    "ICM Rewards": icm_intrinsic_reward.mean(), # type: ignore 
+                    "ICM Forward Loss": total_icm_forward_loss, # type: ignore 
+                    "ICM Inverse Loss": total_icm_inverse_loss, # type: ignore 
+                } 
+                if self.hyperparams.icm_module.enabled 
+                else {}
+            ),
+            **(
+                {
+                    "Combined RL Scheduler": to_tensor(self.optimizers["combined_scheduler"].get_last_lr()[0]) # type: ignore
+                }
                 if self.hyperparams.combined_optimizer
-                else {
+                else 
+                {
                     "Actor RL Scheduler": to_tensor(self.optimizers["actor_scheduler"].get_last_lr()[0]), # type: ignore
                     "Critic RL Scheduler": to_tensor(self.optimizers["critic_scheduler"].get_last_lr()[0]), # type: ignore
                 }
-            ),
-            **({
-                "ICM Rewards": intrinsic_rewards.mean(), # type: ignore 
-                "ICM Forward Loss": forward_loss.mean(), # type: ignore 
-                "ICM Inverse Loss": inverse_loss.mean(), # type: ignore 
-                } if self.hyperparams.icm_module.enabled else {}
-            ) 
+            )
         }
 
     def create_lr_lambda(self):
@@ -805,6 +874,12 @@ class PPO2Recurrent(Agent):
                     self.critic.parameters(), 
                     lr=self.hyperparams.value_learning_rate
                 )
+
+                if self.rnd_module:
+                    RND_optimizer = AdamW(
+                        self.RND.parameters(), 
+                        lr=self.hyperparams.value_learning_rate
+                    )
                 if self.hyperparams.icm_module.enabled:
                     icm_optimizer = AdamW(
                         self.ICM.parameters(), 
@@ -820,6 +895,14 @@ class PPO2Recurrent(Agent):
                     "critic_scheduler": torch.optim.lr_scheduler.LambdaLR(
                         critic_optimizer, 
                         lr_lambda=self.create_lr_lambda()
+                    ),
+                    **({
+                            "RND": RND_optimizer, # type: ignore 
+                            "RND_scheduler": torch.optim.lr_scheduler.LambdaLR(
+                                RND_optimizer, # type: ignore 
+                                lr_lambda=self.create_lr_lambda()
+                            ),
+                        } if self.rnd_module else {}
                     ),
                     **({
                             "ICM": icm_optimizer, # type: ignore 
