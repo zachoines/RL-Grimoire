@@ -667,7 +667,7 @@ class PPO2HumanoidStandupRecurrentConfig(Config):
 class PPO2HumanoidRecurrentConfig(Config):
     def __init__(self):
         self.max_episode_steps = 1024
-        self.num_envs = 256
+        self.num_envs = 512
 
         super().__init__(
             PPO2RecurrentParams(
@@ -686,7 +686,7 @@ class PPO2HumanoidRecurrentConfig(Config):
                 use_moving_average_reward = True,
                 combined_optimizer = False,
                 mini_batch_size = 64,
-                num_rounds = 24,
+                num_rounds = 32,
                 use_lr_scheduler = True,
                 lr_scheduler_constant_steps = 2000,
                 lr_scheduler_max_steps = 40000,
