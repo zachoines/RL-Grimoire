@@ -671,7 +671,6 @@ class PPO2HumanoidRecurrentConfig(Config):
 
         super().__init__(
             PPO2RecurrentParams(
-                tau = 0.2,
                 clip = 0.2,
                 clipped_value_loss_eps = 0.2, # Used when value_loss_clipping is enabled
                 value_loss_clipping = True, 
@@ -688,18 +687,18 @@ class PPO2HumanoidRecurrentConfig(Config):
                 mini_batch_size = 64,
                 num_rounds = 32,
                 use_lr_scheduler = True,
-                lr_scheduler_constant_steps = 2000,
-                lr_scheduler_max_steps = 40000,
+                lr_scheduler_constant_steps = 10000, # 2000
+                lr_scheduler_max_steps = 100000, # 40000
                 lr_scheduler_max_factor = 1.0,
                 lr_scheduler_min_factor = 1.0 / 100.0,
                 icm_module = ICMParams(
                     enabled=False,
-                    state_feature_size=64,
+                    state_feature_size=128,
                     hidden_size=128,
                     alpha=0.1,
                     beta=0.2,
-                    n=5.0,
-                    learning_rate=2.5e-4
+                    n=1.0,
+                    learning_rate=1e-4
                 )
             ),
             TrainerParams(

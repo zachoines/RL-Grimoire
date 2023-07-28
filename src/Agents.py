@@ -503,6 +503,7 @@ class PPO2Recurrent(Agent):
                     self.hyperparams.icm_module.state_feature_size, 
                     device = self.device
                 )
+                self.icm_hidden_seed = None
                 
         else:
             raise NotImplementedError
@@ -534,7 +535,7 @@ class PPO2Recurrent(Agent):
         actor_hidden, critic_hidden = state
         self.actor.set_hidden(actor_hidden)
         self.critic.set_hidden(critic_hidden)
-
+        
     def get_actions(self, state: torch.Tensor, dones: torch.Tensor = torch.tensor([]), eval=False, **kwargs)->tuple[Tensor]:
         if self.is_continous():
             mean, std, _ = self.actor(state.unsqueeze(0), dones=dones.unsqueeze(0))
@@ -549,7 +550,7 @@ class PPO2Recurrent(Agent):
             else:
                 action = normal.sample()
             action = action.clip(self.action_min, self.action_max)
-            return action, normal.log_prob(action).sum(dim=-1), policy_hidden, critic_hidden, mean, std  # type: ignore
+            return action, normal.log_prob(action).sum(dim=-1), mean, std, policy_hidden, critic_hidden # type: ignore
         else:
             raise NotImplementedError
 
@@ -592,7 +593,7 @@ class PPO2Recurrent(Agent):
 
         with torch.no_grad():
             # Reshape batch to gathered lists
-            states, actions, next_states, rewards, dones, truncs, prev_log_probs, policy_hidden, critic_hidden, locs, scales = map(
+            states, actions, next_states, rewards, dones, truncs, prev_log_probs, locs, scales, policy_hidden, critic_hidden = map(
                 torch.stack, zip(*batch)
             )
 
@@ -600,39 +601,35 @@ class PPO2Recurrent(Agent):
             states_plus_one = torch.cat((states, next_states[-1:, :]), dim=0)
             dones_plus_one = torch.cat((dones, torch.zeros_like(dones[-1:, :])), dim = 0)
     
+            # Run the ICM module
+            icm_intrinsic_reward: torch.Tensor
+            icm_hidden_outputs: torch.Tensor
+            if self.hyperparams.icm_module.enabled:
+                _, _, icm_intrinsic_reward, icm_hidden_outputs = self.ICM(
+                    states_plus_one, 
+                    actions,
+                    input_hidden = self.icm_hidden_seed,
+                    dones_plus_one = dones_plus_one,
+                    n = self.hyperparams.icm_module.n,
+                    beta = self.hyperparams.icm_module.beta
+                )
+                self.icm_hidden_seed = self.ICM.get_hidden()
 
-        # Run the ICM module
-        icm_intrinsic_reward: torch.Tensor
-        icm_hidden_outputs: torch.Tensor
-        if self.hyperparams.icm_module.enabled:
-            # _, _, icm_intrinsic_reward = self.ICM(
-            #     states_plus_one, 
-            #     locs, 
-            #     scales,
-            #     n = self.hyperparams.icm_module.n,
-            #     beta = self.hyperparams.icm_module.beta
-            # )
-            _, _, icm_intrinsic_reward, icm_hidden_outputs = self.ICM(
-                states_plus_one, 
-                locs, 
-                scales,
-                n = self.hyperparams.icm_module.n,
-                beta = self.hyperparams.icm_module.beta
-            )
-
-        rnd_intrinsic_reward = None
-        if self.rnd_module:
-            rnd_intrinsic_reward = self.RND(states)
+            # Run the RND module
+            rnd_intrinsic_reward = 0
+            if self.rnd_module:
+                rnd_intrinsic_reward = self.RND(states)
         
         with torch.no_grad():
 
             # Update running mean and variance and normalize rewards.
             if self.hyperparams.use_moving_average_reward:
                 rewards = self.external_reward_normalizer.update(rewards)
-            
+
+            # Add intrinsic rewards
             if self.hyperparams.icm_module.enabled:
                 icm_intrinsic_reward = self.intrinsic_reward_normalizer.update(icm_intrinsic_reward) # type: ignore
-                rewards = rewards + icm_intrinsic_reward
+                rewards = rewards + icm_intrinsic_reward # type: ignore
 
             if self.rnd_module:
                 rewards = rewards + rnd_intrinsic_reward
@@ -674,9 +671,8 @@ class PPO2Recurrent(Agent):
 
                 # Extract mini-batch data
                 with torch.no_grad():
-                    mb_icm_hidden_outputs = icm_hidden_outputs[ids] if self.hyperparams.icm_module.enabled else torch.tensor([])
-                    mb_loc = locs[ids]
-                    mb_scale = scales[ids]
+                    # mb_loc = locs[ids]
+                    # mb_scale = scales[ids]
                     mb_states = states[ids]
                     mb_actions = actions[ids]
                     mb_prev_log_probs = prev_log_probs[ids]
@@ -687,10 +683,10 @@ class PPO2Recurrent(Agent):
                     mb_dones = dones_plus_one[ids]
                     mb_old_values = old_values[ids]
 
-                # Compute policy distribution parameters
+                # Compute policy distribution
                 loc, scale, _ = self.actor(mb_states, input_hidden = requires_grad(mb_policy_hidden[0, :]), dones=requires_grad(mb_dones))
                 dist = Normal(loc, scale)
-                log_probs = dist.log_prob(mb_actions).sum(dim=-1)
+                log_probs = dist.log_prob(mb_actions.detach()).sum(dim=-1)
 
                 # Compute entropy bonus
                 entropy = dist.entropy().mean(dim=-1)
@@ -712,6 +708,7 @@ class PPO2Recurrent(Agent):
                 else:
                     loss_value = F.smooth_l1_loss(predicted_values, mb_targets)
 
+                # Compute RND loss and update
                 if self.rnd_module:
                     rnd_loss = F.mse_loss(self.RND.predictor_network(mb_states), self.RND.target_network(mb_states).detach())
                     rnd_loss.backward()
@@ -722,21 +719,16 @@ class PPO2Recurrent(Agent):
                     self.optimizers["RND"].zero_grad() # type: ignore
                     total_rnd_loss.append(rnd_loss.cpu())
 
+                # Compute ICM loss and update
                 if self.hyperparams.icm_module.enabled:
-                    # forward_loss, inverse_loss, _ = self.ICM(
-                    #     torch.cat((mb_states, mb_states[-1:, :]), dim=0), 
-                    #     mb_loc, 
-                    #     mb_scale,
-                    #     n = self.hyperparams.icm_module.n,
-                    #     beta = self.hyperparams.icm_module.beta
-                    # )
-
+                    mb_icm_hidden_outputs = icm_hidden_outputs[ids] # type: ignore
+                    mb_states_plus_one = torch.cat((states_plus_one[ids], torch.unsqueeze(states_plus_one[1:][ids][-1, :], dim=0)), dim=0)
+                    mb_dones_plus_one = torch.cat((dones_plus_one[ids], torch.unsqueeze(dones_plus_one[1:][ids][-1, :], dim=0)), dim=0)
                     forward_loss, inverse_loss, _, _ = self.ICM(
-                        torch.cat((mb_states, mb_states[-1:, :]), dim=0), 
-                        mb_loc, 
-                        mb_scale,
-                        dones_plus_one = torch.cat((mb_dones, mb_dones[-1:, :]), dim=0),
-                        input_hidden = torch.cat((mb_icm_hidden_outputs, mb_icm_hidden_outputs[-1:, :]), dim=0),
+                        mb_states_plus_one,
+                        mb_actions.clone(),
+                        dones_plus_one = requires_grad(mb_dones_plus_one),
+                        input_hidden = requires_grad(mb_icm_hidden_outputs[0, :]),
                         n = self.hyperparams.icm_module.n,
                         beta = self.hyperparams.icm_module.beta
                     )
@@ -807,7 +799,7 @@ class PPO2Recurrent(Agent):
         total_loss_critic = torch.stack(total_loss_critic).mean()
         total_entropy = torch.stack(total_entropy).mean()
         total_loss_combined = torch.stack(total_loss_combined).mean()
-        
+
         if self.rnd_module:
             total_rnd_loss = torch.stack(total_rnd_loss).mean()
 
@@ -815,7 +807,6 @@ class PPO2Recurrent(Agent):
             total_icm_forward_loss = torch.stack(total_icm_forward_loss).mean()
             total_icm_inverse_loss = torch.stack(total_icm_inverse_loss).mean()
         
-
         return {
             "Actor loss": total_loss_actor,
             "Critic loss": total_loss_critic,

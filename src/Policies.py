@@ -427,7 +427,7 @@ class GaussianGradientLSTMPolicy(nn.Module):
         )
 
         # Other class attributes
-        self.eps = 1e-8
+        self.eps = 1e-6
         self.device = device
         self.to(self.device)
 
@@ -486,6 +486,6 @@ class GaussianGradientLSTMPolicy(nn.Module):
 
         lstm_outputs = torch.cat(lstm_outputs, dim=0)
         means = self.mean(lstm_outputs)
-        stds = self.std(lstm_outputs)
+        stds = self.std(lstm_outputs) + self.eps
 
         return means, stds, hidden_outputs

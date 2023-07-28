@@ -146,12 +146,12 @@ class Trainer:
                 self.step()
 
             # Update with batch
+            self.train_state = self.agent.save_train_state()
             self.log_step(self.model_step())
+            self.agent.restore_train_state(self.train_state)
 
         # Save parameters
         if (self.current_epoch % self.train_params.save_model_frequency) == 0:
-            self.train_state = self.agent.save_train_state()
             self.save_model()
-            self.agent.restore_train_state(self.train_state)
             
         return self.current_epoch
